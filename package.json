@@ -4,6 +4,7 @@
   "description": "Premium Private Cloud Photos & Videos Platform",
   "private": true,
   "scripts": {
+    "build": "cd frontend && npm install && npm run build",
     "dev:backend": "cd backend && npm run start:dev",
     "dev:frontend": "cd frontend && npm run dev",
     "dev:media": "cd media-service && python3 main.py",
@@ -14,6 +15,7 @@
     "docker:up": "docker-compose -f infrastructure/docker-compose.yml up -d",
     "docker:down": "docker-compose -f infrastructure/docker-compose.yml down"
   },
+
   "keywords": [
     "cloud-photos",
     "private-cloud",
