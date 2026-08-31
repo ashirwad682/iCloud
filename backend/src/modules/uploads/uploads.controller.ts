@@ -218,15 +218,20 @@ router.post(
         }
       }
 
-      // Generate immediate signed URLs for instant UI hydration
-      const thumbnailUrl = await storageService.getPresignedDownloadUrl(thumbnailKey, 1800);
-      const previewUrl = await storageService.getPresignedDownloadUrl(previewKey, 1800);
+      // Generate immediate signed URLs or base64 data URLs for instant UI hydration
+      const thumbnailUrl = media.thumbnailBase64
+        ? `data:${media.mimeType || 'image/jpeg'};base64,${media.thumbnailBase64}`
+        : await storageService.getPresignedDownloadUrl(thumbnailKey, 1800);
+      const previewUrl = media.dataBase64
+        ? `data:${media.mimeType || 'image/jpeg'};base64,${media.dataBase64}`
+        : await storageService.getPresignedDownloadUrl(previewKey, 1800);
 
       const enhancedMedia = {
         ...media.toObject(),
         thumbnailUrl,
         previewUrl,
       };
+
 
       // Notify WebSocket clients
       socketGateway.emitMediaProcessing(user._id.toString(), media._id.toString(), 'READY', 'Upload complete', enhancedMedia);
