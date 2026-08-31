@@ -3,24 +3,31 @@ import { io, Socket } from 'socket.io-client';
 class SocketService {
   private socket: Socket | null = null;
 
-  connect(): Socket {
+  connect(): Socket | null {
     if (!this.socket) {
       const token = localStorage.getItem('cv_access_token');
       const wsUrl = (import.meta as any).env?.VITE_WS_URL || (import.meta as any).env?.VITE_API_URL || undefined;
+      
+      // If deployed on Vercel without custom WS server, skip persistent WS attempts
+      if (!wsUrl || (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app') && !wsUrl.includes('custom-ws'))) {
+        return null;
+      }
+
       this.socket = io(wsUrl, {
         auth: { token },
         reconnection: true,
-        reconnectionAttempts: 10,
-        reconnectionDelay: 2000,
-        transports: ['websocket', 'polling'],
+        reconnectionAttempts: 2,
+        reconnectionDelay: 5000,
+        transports: ['websocket'],
       });
 
-      this.socket.on('connect', () => {
-        // console.log('⚡ Connected to CloudVault Real-time Gateway');
+      this.socket.on('connect_error', () => {
+        this.disconnect();
       });
     }
     return this.socket;
   }
+
 
   disconnect(): void {
     if (this.socket) {

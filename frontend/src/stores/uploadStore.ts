@@ -98,7 +98,7 @@ export const useUploadStore = create<UploadState>((set, get) => ({
 
       const res = await api.post('/uploads/direct', formData, {
         headers: {
-          'Content-Type': 'multipart/form-data',
+          'Content-Type': undefined,
         },
         onUploadProgress: (progressEvent: any) => {
           if (progressEvent.total) {
@@ -107,6 +107,7 @@ export const useUploadStore = create<UploadState>((set, get) => ({
           }
         },
       });
+
 
       if (res.data?.success) {
         get().updateItem(item.id, {
