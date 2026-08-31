@@ -149,6 +149,14 @@ router.post(
         req.body.hidden === 'true' ||
         req.body.isHidden === true;
 
+      // Convert buffer to base64 fallback for serverless persistence
+      let dataBase64: string | undefined = undefined;
+      let thumbnailBase64: string | undefined = undefined;
+
+      if (file.size <= 12 * 1024 * 1024) {
+        dataBase64 = file.buffer.toString('base64');
+      }
+
       // 5. Create Instant-Ready Media Record
       const media = await MediaModel.create({
         _id: mediaId,
@@ -165,6 +173,8 @@ router.post(
         height,
         aspectRatio,
         checksum,
+        dataBase64,
+        thumbnailBase64: thumbnailBase64 || dataBase64,
         capturedAt: new Date(),
         uploadedAt: new Date(),
         status: 'READY',
@@ -179,6 +189,7 @@ router.post(
           categories: [isImage ? 'Photos' : 'Videos'],
         },
       });
+
 
       // 6. Update User Storage Used
       await UserModel.updateOne(

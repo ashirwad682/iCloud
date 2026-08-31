@@ -19,8 +19,9 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useUIStore } from '../../stores/uiStore';
-import { api } from '../../services/api';
+import { api, resolveMediaUrl } from '../../services/api';
 import { format } from 'date-fns';
+
 
 export const MediaViewerModal: React.FC = () => {
   const {
@@ -260,20 +261,21 @@ export const MediaViewerModal: React.FC = () => {
         <div className="flex-1 flex items-center justify-center p-6 md:p-10 overflow-hidden">
           {isVideo ? (
             <video
-              src={viewerMedia.originalUrl || viewerMedia.previewUrl}
+              src={resolveMediaUrl(viewerMedia.originalUrl || viewerMedia.previewUrl)}
               controls
               autoPlay
-              className="max-h-[82vh] max-w-full rounded-2xl shadow-2xl bg-black"
+              className="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain"
             />
           ) : (
             <img
-              src={viewerMedia.previewUrl || viewerMedia.thumbnailUrl}
+              src={resolveMediaUrl(viewerMedia.previewUrl || viewerMedia.thumbnailUrl || viewerMedia.originalUrl)}
               alt={viewerMedia.originalName}
               style={{
                 transform: `scale(${zoom}) rotate(${rotation}deg)`,
-                transition: 'transform 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+                transition: 'transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1)',
               }}
-              className="max-h-[82vh] max-w-full object-contain rounded-2xl shadow-2xl pointer-events-auto"
+              className="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain select-none cursor-grab active:cursor-grabbing"
+              draggable={false}
             />
           )}
         </div>

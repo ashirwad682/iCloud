@@ -2,7 +2,7 @@ import React from 'react';
 import { Play, Heart, CheckCircle2, Circle, Loader2 } from 'lucide-react';
 import { Media } from '../../types';
 import { useUIStore } from '../../stores/uiStore';
-import { api } from '../../services/api';
+import { api, resolveMediaUrl } from '../../services/api';
 
 interface MediaCardProps {
   media: Media;
@@ -50,7 +50,8 @@ export const MediaCard: React.FC<MediaCardProps> = ({
     }
   };
 
-  const mediaUrl = media.thumbnailUrl || media.previewUrl || media.originalUrl;
+  const mediaUrl = resolveMediaUrl(media.thumbnailUrl || media.previewUrl || media.originalUrl);
+
 
   return (
     <div

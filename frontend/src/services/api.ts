@@ -18,6 +18,19 @@ export const api = axios.create({
   withCredentials: true,
 });
 
+export function resolveMediaUrl(url?: string): string {
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('blob:')) {
+    return url;
+  }
+  const cleanBase = (import.meta as any).env?.VITE_API_URL?.replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '') || '';
+  if (url.startsWith('/')) {
+    return cleanBase ? `${cleanBase}${url}` : url;
+  }
+  return cleanBase ? `${cleanBase}/${url}` : url;
+}
+
+
 // Intercept requests to add Authorization Bearer token
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('cv_access_token');

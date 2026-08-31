@@ -51,8 +51,13 @@ export interface IMedia extends Document {
   posterKey?: string;     // Video poster frame
   hlsMasterKey?: string;  // Video HLS m3u8
   
+  // Cloud-persistence fallback for serverless
+  dataBase64?: string;
+  thumbnailBase64?: string;
+
   // State
   status: 'UPLOADING' | 'QUARANTINE' | 'PROCESSING' | 'READY' | 'FAILED';
+
   processingError?: string;
   isFavorite: boolean;
   isHidden?: boolean;
@@ -142,12 +147,19 @@ const MediaSchema = new Schema<IMedia>(
     hlsMasterKey: {
       type: String,
     },
+    dataBase64: {
+      type: String,
+    },
+    thumbnailBase64: {
+      type: String,
+    },
     status: {
       type: String,
       enum: ['UPLOADING', 'QUARANTINE', 'PROCESSING', 'READY', 'FAILED'],
-      default: 'PROCESSING',
+      default: 'READY',
       index: true,
     },
+
     processingError: {
       type: String,
     },

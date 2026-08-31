@@ -92,16 +92,18 @@ router.get('/', authGuard, async (req: AuthenticatedRequest, res: Response, next
       ? paginatedItems[paginatedItems.length - 1].capturedAt.toISOString()
       : null;
 
-    // Attach short-lived signed URLs for thumbnails and previews
+    // Attach short-lived signed URLs or high-speed data URLs for thumbnails and previews
     const enhancedItems = await Promise.all(
       paginatedItems.map(async (item) => {
-        const thumbUrl = item.thumbnailKey
-          ? await storageService.getPresignedDownloadUrl(item.thumbnailKey, 1800)
-          : await storageService.getPresignedDownloadUrl(item.storageKey, 1800);
+        let thumbUrl = item.thumbnailBase64
+          ? `data:${item.mimeType || 'image/jpeg'};base64,${item.thumbnailBase64}`
+          : (item.dataBase64
+              ? `data:${item.mimeType || 'image/jpeg'};base64,${item.dataBase64}`
+              : await storageService.getPresignedDownloadUrl(item.thumbnailKey || item.storageKey, 1800));
 
-        const previewUrl = item.previewKey
-          ? await storageService.getPresignedDownloadUrl(item.previewKey, 1800)
-          : thumbUrl;
+        let previewUrl = item.dataBase64
+          ? `data:${item.mimeType || 'image/jpeg'};base64,${item.dataBase64}`
+          : (item.previewKey ? await storageService.getPresignedDownloadUrl(item.previewKey, 1800) : thumbUrl);
 
         return {
           ...item,
@@ -110,6 +112,7 @@ router.get('/', authGuard, async (req: AuthenticatedRequest, res: Response, next
         };
       })
     );
+
 
     // Group items into timeline sections (Today, Yesterday, Date)
     const timelineSections: Array<{
@@ -296,19 +299,25 @@ router.get('/:id', authGuard, requireMediaOwnership, async (req: AuthenticatedRe
   try {
     const media = (req as any).mediaResource;
 
-    const originalUrl = await storageService.getPresignedDownloadUrl(
-      media.storageKey,
-      3600,
-      media.originalName
-    );
+    const originalUrl = media.dataBase64
+      ? `data:${media.mimeType || 'image/jpeg'};base64,${media.dataBase64}`
+      : await storageService.getPresignedDownloadUrl(
+          media.storageKey,
+          3600,
+          media.originalName
+        );
 
-    const previewUrl = media.previewKey
-      ? await storageService.getPresignedDownloadUrl(media.previewKey, 3600)
-      : originalUrl;
+    const previewUrl = media.dataBase64
+      ? `data:${media.mimeType || 'image/jpeg'};base64,${media.dataBase64}`
+      : (media.previewKey
+          ? await storageService.getPresignedDownloadUrl(media.previewKey, 3600)
+          : originalUrl);
 
-    const thumbnailUrl = media.thumbnailKey
-      ? await storageService.getPresignedDownloadUrl(media.thumbnailKey, 3600)
-      : originalUrl;
+    const thumbnailUrl = media.thumbnailBase64
+      ? `data:${media.mimeType || 'image/jpeg'};base64,${media.thumbnailBase64}`
+      : (media.thumbnailKey
+          ? await storageService.getPresignedDownloadUrl(media.thumbnailKey, 3600)
+          : originalUrl);
 
     res.json({
       success: true,
@@ -319,6 +328,7 @@ router.get('/:id', authGuard, requireMediaOwnership, async (req: AuthenticatedRe
         thumbnailUrl,
       },
     });
+
   } catch (error) {
     next(error);
   }
