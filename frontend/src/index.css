@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #FFFFFF;
+    --foreground: #1D1D1F;
+    --card: #FFFFFF;
+    --card-foreground: #1D1D1F;
+    --popover: #FFFFFF;
+    --popover-foreground: #1D1D1F;
+    --primary: #0071E3;
+    --primary-foreground: #FFFFFF;
+    --primary-hover: #0077ED;
+    --secondary: #F5F5F7;
+    --secondary-foreground: #1D1D1F;
+    --muted: #F2F2F7;
+    --muted-foreground: #86868B;
+    --accent: #F2F2F7;
+    --accent-foreground: #1D1D1F;
+    --destructive: #FF3B30;
+    --destructive-foreground: #FFFFFF;
+    --border: #E5E5EA;
+    --input: #E5E5EA;
+    --ring: #0071E3;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: #000000;
+    --foreground: #F5F5F7;
+    --card: #1C1C1E;
+    --card-foreground: #F5F5F7;
+    --popover: #1C1C1E;
+    --popover-foreground: #F5F5F7;
+    --primary: #0071E3;
+    --primary-foreground: #FFFFFF;
+    --primary-hover: #0077ED;
+    --secondary: #161618;
+    --secondary-foreground: #F5F5F7;
+    --muted: #2C2C2E;
+    --muted-foreground: #86868B;
+    --accent: #2C2C2E;
+    --accent-foreground: #F5F5F7;
+    --destructive: #FF453A;
+    --destructive-foreground: #FFFFFF;
+    --border: #2C2C2E;
+    --input: #3A3A3C;
+    --ring: #0071E3;
+  }
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  background-color: var(--background);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, .font-display {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  letter-spacing: -0.02em;
+}
+
+/* Apple Sleek Scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.16);
+  border-radius: 9999px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* Animations */
+.animate-enter {
+  animation: enter 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: scale(0.98) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}

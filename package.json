@@ -1,0 +1,29 @@
+{
+  "name": "cloudvault-platform",
+  "version": "1.0.0",
+  "description": "Premium Private Cloud Photos & Videos Platform",
+  "private": true,
+  "scripts": {
+    "dev:backend": "cd backend && npm run start:dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:media": "cd media-service && python3 main.py",
+    "build:backend": "cd backend && npm run build",
+    "build:frontend": "cd frontend && npm run build",
+    "test:backend": "cd backend && npm test",
+    "test:frontend": "cd frontend && npm test",
+    "docker:up": "docker-compose -f infrastructure/docker-compose.yml up -d",
+    "docker:down": "docker-compose -f infrastructure/docker-compose.yml down"
+  },
+  "keywords": [
+    "cloud-photos",
+    "private-cloud",
+    "media-storage",
+    "photo-gallery",
+    "video-streaming",
+    "hls",
+    "passkeys",
+    "2fa"
+  ],
+  "author": "CloudVault Team",
+  "license": "MIT"
+}
