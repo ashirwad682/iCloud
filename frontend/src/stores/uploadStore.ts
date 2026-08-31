@@ -97,9 +97,6 @@ export const useUploadStore = create<UploadState>((set, get) => ({
       }
 
       const res = await api.post('/uploads/direct', formData, {
-        headers: {
-          'Content-Type': undefined,
-        },
         onUploadProgress: (progressEvent: any) => {
           if (progressEvent.total) {
             const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -107,6 +104,7 @@ export const useUploadStore = create<UploadState>((set, get) => ({
           }
         },
       });
+
 
 
       if (res.data?.success) {

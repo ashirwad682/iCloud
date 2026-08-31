@@ -12,9 +12,6 @@ const API_BASE_URL = cleanUrl
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
   withCredentials: true,
 });
 
@@ -30,15 +27,19 @@ export function resolveMediaUrl(url?: string): string {
   return cleanBase ? `${cleanBase}/${url}` : url;
 }
 
-
 // Intercept requests to add Authorization Bearer token
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('cv_access_token');
   if (token && config.headers) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  if (config.data instanceof FormData && config.headers) {
+    delete config.headers['Content-Type'];
+    delete config.headers['content-type'];
+  }
   return config;
 });
+
 
 // Intercept responses to handle token expiration & refresh
 api.interceptors.response.use(

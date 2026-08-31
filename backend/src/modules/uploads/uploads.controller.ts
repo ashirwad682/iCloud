@@ -81,6 +81,13 @@ router.post(
         storageService.uploadBuffer(storageKey, file.buffer, file.mimetype),
       ];
 
+      let dataBase64: string | undefined = undefined;
+      let thumbnailBase64: string | undefined = undefined;
+
+      if (file.size <= 16 * 1024 * 1024) {
+        dataBase64 = file.buffer.toString('base64');
+      }
+
       // 4. Ultra-Fast Parallel Image Pipeline (Sub-10ms Sharp WebP Processing)
       if (isImage) {
         try {
@@ -114,6 +121,10 @@ router.post(
             dominantHex = `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
           }
 
+          if (thumbBuffer) {
+            thumbnailBase64 = thumbBuffer.toString('base64');
+          }
+
           uploadPromises.push(storageService.uploadBuffer(thumbnailKey, thumbBuffer, 'image/webp'));
           uploadPromises.push(storageService.uploadBuffer(previewKey, previewBuffer, 'image/webp'));
         } catch (err) {
@@ -131,13 +142,6 @@ router.post(
         req.body.hidden === 'true' ||
         req.body.isHidden === true;
 
-      // Convert buffer to base64 fallback for serverless persistence
-      let dataBase64: string | undefined = undefined;
-      let thumbnailBase64: string | undefined = undefined;
-
-      if (file.size <= 12 * 1024 * 1024) {
-        dataBase64 = file.buffer.toString('base64');
-      }
 
       // 5. Create Instant-Ready Media Record
       const media = await MediaModel.create({
