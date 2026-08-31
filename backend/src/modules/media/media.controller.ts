@@ -273,7 +273,7 @@ router.get('/types-summary', authGuard, async (req: AuthenticatedRequest, res: R
   }
 });
 
-// GET /api/v1/media/stream-raw (Direct high-speed media viewing)
+// GET /api/v1/media/stream-raw (Direct high-speed media viewing & seeking with Range headers)
 router.get('/stream-raw', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const key = req.query.key as string;
@@ -281,18 +281,65 @@ router.get('/stream-raw', async (req: Request, res: Response, next: NextFunction
       throw new AppError('Key parameter is required.', 400, 'MISSING_KEY');
     }
 
-    if (key.endsWith('.webp')) res.setHeader('Content-Type', 'image/webp');
-    else if (key.endsWith('.png') || key.endsWith('.PNG')) res.setHeader('Content-Type', 'image/png');
-    else if (key.endsWith('.mp4') || key.endsWith('.MP4')) res.setHeader('Content-Type', 'video/mp4');
-    else res.setHeader('Content-Type', 'image/jpeg');
+    // Try to find media record for accurate metadata
+    let media = await MediaModel.findOne({
+      $or: [{ storageKey: key }, { originalKey: key }, { previewKey: key }, { thumbnailKey: key }],
+    }).lean();
 
+    let contentType = media?.mimeType;
+    if (!contentType) {
+      const lower = key.toLowerCase();
+      if (lower.endsWith('.webp')) contentType = 'image/webp';
+      else if (lower.endsWith('.png')) contentType = 'image/png';
+      else if (lower.endsWith('.mp4') || lower.endsWith('.m4v')) contentType = 'video/mp4';
+      else if (lower.endsWith('.mov')) contentType = 'video/quicktime';
+      else if (lower.endsWith('.webm')) contentType = 'video/webm';
+      else if (lower.endsWith('.mkv')) contentType = 'video/x-matroska';
+      else if (media?.mediaType === 'VIDEO') contentType = 'video/mp4';
+      else contentType = 'image/jpeg';
+    }
+
+    const rangeHeader = req.headers.range;
+    let range: { start: number; end?: number } | undefined = undefined;
+
+    if (rangeHeader) {
+      const parts = rangeHeader.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : undefined;
+      if (!isNaN(start)) {
+        range = { start, end };
+      }
+    }
+
+    const { stream, contentLength, contentType: storageContentType } = await storageService.getObjectStream(key, range);
+    const finalContentType = storageContentType || contentType;
+
+    res.setHeader('Content-Type', finalContentType);
+    res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'public, max-age=86400');
-    const stream = await storageService.getObjectStream(key);
+
+    if (range && media?.size) {
+      const start = range.start;
+      const end = range.end !== undefined ? Math.min(range.end, media.size - 1) : (contentLength ? start + contentLength - 1 : media.size - 1);
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${media.size}`);
+      if (contentLength) res.setHeader('Content-Length', contentLength);
+    } else if (contentLength) {
+      res.setHeader('Content-Length', contentLength);
+    }
+
+    stream.on('error', (err) => {
+      if (!res.headersSent) {
+        next(err);
+      }
+    });
+
     stream.pipe(res);
   } catch (error) {
     next(error);
   }
 });
+
 
 // GET /api/v1/media/:id (Get single media with original & preview signed URLs)
 router.get('/:id', authGuard, requireMediaOwnership, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
@@ -455,7 +502,7 @@ router.post('/bulk-download', authGuard, async (req: AuthenticatedRequest, res: 
 
     for (const item of items) {
       try {
-        const stream = await storageService.getObjectStream(item.storageKey);
+        const { stream } = await storageService.getObjectStream(item.storageKey);
         archive.append(stream, { name: item.originalName });
       } catch (err) {
         console.error(`Failed to append file to ZIP: ${item.originalName}`);

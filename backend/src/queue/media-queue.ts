@@ -65,7 +65,7 @@ export class MediaQueueService {
 
       if (isImage) {
         // Read original stream into buffer
-        const stream = await storageService.getObjectStream(originalKey);
+        const { stream } = await storageService.getObjectStream(originalKey);
         const chunks: Buffer[] = [];
         for await (const chunk of stream) {
           chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);

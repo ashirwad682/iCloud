@@ -278,7 +278,7 @@ export const SharedAlbumDetailPage: React.FC = () => {
                   <input
                     type="file"
                     multiple
-                    accept="image/*,video/*"
+                    accept="image/*,video/*,.mp4,.mov,.avi,.mkv,.webm,.3gp,.m4v,.flv,.heic,.heif,.jpg,.jpeg,.png,.webp"
                     onChange={handleDirectUpload}
                     className="hidden"
                   />

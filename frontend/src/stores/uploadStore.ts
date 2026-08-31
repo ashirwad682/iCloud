@@ -20,6 +20,26 @@ interface UploadState {
 // 6 Parallel Upload Workers for Maximum Throughput
 const MAX_CONCURRENT_UPLOADS = 6;
 
+function detectMimeType(file: File): string {
+  if (file.type && file.type !== 'application/octet-stream') {
+    return file.type;
+  }
+  const name = file.name.toLowerCase();
+  if (/\.(mp4|m4v)$/i.test(name)) return 'video/mp4';
+  if (/\.mov$/i.test(name)) return 'video/quicktime';
+  if (/\.webm$/i.test(name)) return 'video/webm';
+  if (/\.mkv$/i.test(name)) return 'video/x-matroska';
+  if (/\.avi$/i.test(name)) return 'video/x-msvideo';
+  if (/\.3gp$/i.test(name)) return 'video/3gpp';
+  if (/\.(jpg|jpeg)$/i.test(name)) return 'image/jpeg';
+  if (/\.png$/i.test(name)) return 'image/png';
+  if (/\.webp$/i.test(name)) return 'image/webp';
+  if (/\.gif$/i.test(name)) return 'image/gif';
+  if (/\.heic$/i.test(name)) return 'image/heic';
+  if (/\.heif$/i.test(name)) return 'image/heif';
+  return file.type || 'application/octet-stream';
+}
+
 // Helper to read blob chunk as Base64
 function readChunkAsBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -33,6 +53,7 @@ function readChunkAsBase64(blob: Blob): Promise<string> {
     reader.readAsDataURL(blob);
   });
 }
+
 
 export const useUploadStore = create<UploadState>((set, get) => ({
   queue: [],
@@ -137,7 +158,7 @@ export const useUploadStore = create<UploadState>((set, get) => ({
           const res = await api.post('/uploads/chunk', {
             uploadId,
             originalName: item.file.name,
-            mimeType: item.file.type || 'application/octet-stream',
+            mimeType: detectMimeType(item.file),
             size: item.file.size,
             partNumber: part,
             totalParts,

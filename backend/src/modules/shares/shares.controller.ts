@@ -319,7 +319,7 @@ router.post('/public/:token/download-all', async (req: Request, res: Response, n
 
     for (const item of items) {
       try {
-        const stream = await storageService.getObjectStream(item.storageKey);
+        const { stream } = await storageService.getObjectStream(item.storageKey);
         archive.append(stream, { name: item.originalName });
       } catch (err) {
         console.error(`Skipping item ${item._id} during archive streaming`, err);

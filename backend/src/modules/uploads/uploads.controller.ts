@@ -6,12 +6,14 @@ import { authGuard, AuthenticatedRequest } from '../../common/guards/auth.guard'
 import { MediaModel } from '../../database/models/Media';
 import { UserModel } from '../../database/models/User';
 import { UploadSessionModel } from '../../database/models/UploadSession';
+import { UploadChunkModel } from '../../database/models/UploadChunk';
 import { storageService } from '../storage/storage.service';
 import { mediaQueueService } from '../../queue/media-queue';
 import { CryptoUtil } from '../../common/utils/crypto';
 import { AppError } from '../../common/middleware/error.middleware';
 import { uploadRateLimiter } from '../../common/middleware/rate-limiter.middleware';
 import { socketGateway } from '../../websocket/socket.gateway';
+import sharp from 'sharp';
 
 const router = Router();
 const upload = multer({
@@ -21,15 +23,29 @@ const upload = multer({
   },
 });
 
-import sharp from 'sharp';
-
-// Magic bytes validator for media security (permissive with format recognition)
-function isValidMediaSignature(buffer: Buffer, mimetype: string): boolean {
-  if (!buffer || buffer.length === 0) return false;
-  return true;
+function normalizeMimeType(mimeType: string, filename: string): string {
+  const lower = filename.toLowerCase();
+  if (mimeType && mimeType !== 'application/octet-stream' && mimeType !== 'binary/octet-stream') {
+    return mimeType;
+  }
+  if (/\.(mp4|m4v)$/i.test(lower)) return 'video/mp4';
+  if (/\.mov$/i.test(lower)) return 'video/quicktime';
+  if (/\.webm$/i.test(lower)) return 'video/webm';
+  if (/\.mkv$/i.test(lower)) return 'video/x-matroska';
+  if (/\.avi$/i.test(lower)) return 'video/x-msvideo';
+  if (/\.3gp$/i.test(lower)) return 'video/3gpp';
+  if (/\.flv$/i.test(lower)) return 'video/x-flv';
+  if (/\.(jpg|jpeg)$/i.test(lower)) return 'image/jpeg';
+  if (/\.png$/i.test(lower)) return 'image/png';
+  if (/\.webp$/i.test(lower)) return 'image/webp';
+  if (/\.gif$/i.test(lower)) return 'image/gif';
+  if (/\.svg$/i.test(lower)) return 'image/svg+xml';
+  if (/\.(heic|heif)$/i.test(lower)) return 'image/heic';
+  if (/\.avif$/i.test(lower)) return 'image/avif';
+  return mimeType || 'application/octet-stream';
 }
 
-// POST /api/v1/uploads/direct (Direct Multipart File Upload with Sub-50ms Inline Processing)
+// POST /api/v1/uploads/direct (Direct Multipart File Upload with Inline Processing)
 router.post(
   '/direct',
   authGuard,
@@ -55,8 +71,9 @@ router.post(
 
       // 2. Validate MIME type & Extension
       const lowerName = file.originalname.toLowerCase();
-      const isImage = file.mimetype.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|svg|heic|heif|bmp|tiff|avif|ico)$/i.test(lowerName);
-      const isVideo = file.mimetype.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm|3gp|m4v|flv)$/i.test(lowerName);
+      const normalizedMime = normalizeMimeType(file.mimetype, file.originalname);
+      const isVideo = normalizedMime.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm|3gp|m4v|flv)$/i.test(lowerName);
+      const isImage = normalizedMime.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|svg|heic|heif|bmp|tiff|avif|ico)$/i.test(lowerName);
 
       if (!isImage && !isVideo) {
         throw new AppError('Unsupported file format. Only photos and videos are accepted.', 400, 'UNSUPPORTED_MEDIA_TYPE');
@@ -64,7 +81,6 @@ router.post(
 
       // 3. Compute Checksum (SHA-256)
       const checksum = CryptoUtil.computeChecksum(file.buffer);
-
 
       const mediaId = new mongoose.Types.ObjectId();
       const mediaType = isVideo ? 'VIDEO' : 'PHOTO';
@@ -78,17 +94,18 @@ router.post(
       let dominantHex = '#0B0F19';
 
       const uploadPromises: Promise<any>[] = [
-        storageService.uploadBuffer(storageKey, file.buffer, file.mimetype),
+        storageService.uploadBuffer(storageKey, file.buffer, normalizedMime),
       ];
 
       let dataBase64: string | undefined = undefined;
       let thumbnailBase64: string | undefined = undefined;
 
-      if (file.size <= 16 * 1024 * 1024) {
+      // Store base64 in MongoDB only if <= 4MB to prevent 16MB document limit overflow
+      if (file.size <= 4 * 1024 * 1024) {
         dataBase64 = file.buffer.toString('base64');
       }
 
-      // 4. Ultra-Fast Parallel Image Pipeline (Sub-10ms Sharp WebP Processing)
+      // 4. Fast Image Processing
       if (isImage) {
         try {
           thumbnailKey = storageService.generateKey(user._id.toString(), mediaId.toString(), 'thumbnail', 'webp');
@@ -134,14 +151,13 @@ router.post(
         }
       }
 
-      // Execute S3 storage uploads concurrently
+      // Execute storage uploads concurrently
       await Promise.all(uploadPromises);
 
       const isHidden =
         req.body.isHidden === 'true' ||
         req.body.hidden === 'true' ||
         req.body.isHidden === true;
-
 
       // 5. Create Instant-Ready Media Record
       const media = await MediaModel.create({
@@ -153,7 +169,7 @@ router.post(
         thumbnailKey,
         previewKey,
         mediaType,
-        mimeType: file.mimetype,
+        mimeType: normalizedMime,
         size: file.size,
         width,
         height,
@@ -175,7 +191,6 @@ router.post(
           categories: [isImage ? 'Photos' : 'Videos'],
         },
       });
-
 
       // 6. Update User Storage Used
       await UserModel.updateOne(
@@ -232,7 +247,6 @@ router.post(
         previewUrl,
       };
 
-
       // Notify WebSocket clients
       socketGateway.emitMediaProcessing(user._id.toString(), media._id.toString(), 'READY', 'Upload complete', enhancedMedia);
 
@@ -268,86 +282,108 @@ router.post(
 
       const data = schema.parse(req.body);
       const user = req.user!;
+      const normalizedMime = normalizeMimeType(data.mimeType, data.originalName);
 
-      // Find or create session
-      let session = await UploadSessionModel.findOne({ uploadId: data.uploadId, userId: user._id });
-      if (!session) {
-        // Quota check
+      // Quota check on first chunk
+      if (data.partNumber === 1) {
         if (user.storageUsedBytes + data.size > user.storageQuotaBytes) {
           throw new AppError('Storage quota exceeded.', 403, 'QUOTA_EXCEEDED');
         }
-
-        const mediaId = new mongoose.Types.ObjectId();
-        const storageKey = storageService.generateKey(user._id.toString(), mediaId.toString(), 'original');
-        session = await UploadSessionModel.create({
-          userId: user._id,
-          uploadId: data.uploadId,
-          originalName: data.originalName,
-          mimeType: data.mimeType,
-          size: data.size,
-          storageKey,
-          totalParts: data.totalParts,
-          albumId: data.albumId,
-          isHidden: data.isHidden,
-          status: 'UPLOADING',
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-          chunks: [{ partNumber: data.partNumber, dataBase64: data.chunkBase64 }],
-        });
-      } else {
-        await UploadSessionModel.updateOne(
-          { _id: session._id },
-          { $push: { chunks: { partNumber: data.partNumber, dataBase64: data.chunkBase64 } } }
-        );
       }
 
-      // Check if all chunks have arrived
-      const updatedSession = await UploadSessionModel.findById(session._id).lean();
-      const currentChunks = updatedSession?.chunks || [];
+      // Store chunk in dedicated UploadChunk collection (prevents 16MB document size overflow)
+      await UploadChunkModel.updateOne(
+        { uploadId: data.uploadId, partNumber: data.partNumber },
+        {
+          $set: {
+            uploadId: data.uploadId,
+            userId: user._id,
+            partNumber: data.partNumber,
+            totalParts: data.totalParts,
+            dataBase64: data.chunkBase64,
+          },
+        },
+        { upsert: true }
+      );
 
-      if (currentChunks.length < data.totalParts) {
+      // Count received parts
+      const receivedCount = await UploadChunkModel.countDocuments({ uploadId: data.uploadId });
+
+      if (receivedCount < data.totalParts) {
         return res.json({
           success: true,
           data: {
             uploadId: data.uploadId,
-            receivedParts: currentChunks.length,
+            receivedParts: receivedCount,
             totalParts: data.totalParts,
             isComplete: false,
           },
         });
       }
 
-      // All chunks received! Assemble in order
-      currentChunks.sort((a, b) => a.partNumber - b.partNumber);
+      // All chunks received! Retrieve and assemble in sequence
+      const allChunks = await UploadChunkModel.find({ uploadId: data.uploadId })
+        .sort({ partNumber: 1 })
+        .lean();
+
       const fullBuffer = Buffer.concat(
-        currentChunks.map((c) => Buffer.from(c.dataBase64, 'base64'))
+        allChunks.map((c) => Buffer.from(c.dataBase64, 'base64'))
       );
 
-      const isVideo = data.mimeType.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm|3gp|m4v|flv)$/i.test(data.originalName.toLowerCase());
+      // Clean up chunks
+      await UploadChunkModel.deleteMany({ uploadId: data.uploadId });
+
+      const lowerName = data.originalName.toLowerCase();
+      const isVideo = normalizedMime.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm|3gp|m4v|flv)$/i.test(lowerName);
       const isImage = !isVideo;
       const mediaId = new mongoose.Types.ObjectId();
-      const storageKey = session.storageKey;
+      const storageKey = storageService.generateKey(user._id.toString(), mediaId.toString(), 'original');
       let thumbnailKey = storageKey;
       let previewKey = storageKey;
       let width = 0;
       let height = 0;
       let aspectRatio = 1;
-      let dataBase64 = fullBuffer.toString('base64');
-      let thumbnailBase64 = dataBase64;
+      let dominantHex = '#0B0F19';
+
+      // Upload assembled fullBuffer to StorageService (GridFS & local disk & S3)
+      await storageService.uploadBuffer(storageKey, fullBuffer, normalizedMime);
+
+      let dataBase64: string | undefined = undefined;
+      let thumbnailBase64: string | undefined = undefined;
+
+      // Only store base64 in MongoDB if <= 4MB
+      if (fullBuffer.length <= 4 * 1024 * 1024) {
+        dataBase64 = fullBuffer.toString('base64');
+      }
 
       if (isImage) {
         try {
           thumbnailKey = storageService.generateKey(user._id.toString(), mediaId.toString(), 'thumbnail', 'webp');
           previewKey = storageService.generateKey(user._id.toString(), mediaId.toString(), 'preview', 'webp');
           const imageSharp = sharp(fullBuffer);
-          const [metadata, thumbBuffer] = await Promise.all([
+          const [metadata, thumbBuffer, previewBuffer, stats] = await Promise.all([
             imageSharp.metadata(),
             imageSharp.clone().resize({ width: 320, height: 320, fit: 'cover' }).webp({ quality: 82 }).toBuffer(),
+            imageSharp.clone().resize({ width: 1400, height: 1400, fit: 'inside', withoutEnlargement: true }).webp({ quality: 88 }).toBuffer(),
+            imageSharp.stats().catch(() => null),
           ]);
           width = metadata.width || 0;
           height = metadata.height || 0;
           if (width && height) aspectRatio = width / height;
-          if (thumbBuffer) thumbnailBase64 = thumbBuffer.toString('base64');
-        } catch {}
+          if (stats && stats.dominant) {
+            const { r, g, b } = stats.dominant;
+            dominantHex = `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+          }
+          if (thumbBuffer) {
+            thumbnailBase64 = thumbBuffer.toString('base64');
+            await storageService.uploadBuffer(thumbnailKey, thumbBuffer, 'image/webp');
+          }
+          if (previewBuffer) {
+            await storageService.uploadBuffer(previewKey, previewBuffer, 'image/webp');
+          }
+        } catch (err) {
+          console.warn(`Chunk Sharp processing notice for ${data.originalName}:`, err);
+        }
       }
 
       // Create Media Record
@@ -360,20 +396,27 @@ router.post(
         thumbnailKey,
         previewKey,
         mediaType: isVideo ? 'VIDEO' : 'PHOTO',
-        mimeType: data.mimeType,
+        mimeType: normalizedMime,
         size: fullBuffer.length,
         width,
         height,
         aspectRatio,
         checksum: CryptoUtil.computeChecksum(fullBuffer),
         dataBase64,
-        thumbnailBase64,
+        thumbnailBase64: thumbnailBase64 || (isImage && fullBuffer.length <= 4 * 1024 * 1024 ? dataBase64 : undefined),
         capturedAt: new Date(),
         uploadedAt: new Date(),
         status: 'READY',
         isFavorite: false,
         isHidden: !!data.isHidden,
         isDeleted: false,
+        metadata: {
+          colorPalette: [dominantHex],
+        },
+        aiMetadata: {
+          tags: [isImage ? 'Photos' : 'Videos'],
+          categories: [isImage ? 'Photos' : 'Videos'],
+        },
       });
 
       // Update User storage
@@ -401,14 +444,23 @@ router.post(
         } catch {}
       }
 
-      // Cleanup UploadSession
-      await UploadSessionModel.deleteOne({ _id: session._id });
+      const streamUrl = await storageService.getPresignedDownloadUrl(storageKey, 3600);
+      const thumbnailUrl = media.thumbnailBase64
+        ? `data:${media.mimeType || 'image/jpeg'};base64,${media.thumbnailBase64}`
+        : streamUrl;
+      const previewUrl = media.dataBase64
+        ? `data:${media.mimeType || 'image/jpeg'};base64,${media.dataBase64}`
+        : streamUrl;
 
       const enhancedMedia = {
         ...media.toObject(),
-        thumbnailUrl: `data:${media.mimeType || 'image/jpeg'};base64,${media.thumbnailBase64 || media.dataBase64}`,
-        previewUrl: `data:${media.mimeType || 'image/jpeg'};base64,${media.dataBase64}`,
+        thumbnailUrl,
+        previewUrl,
+        originalUrl: streamUrl,
       };
+
+      // Notify via WebSocket
+      socketGateway.emitMediaProcessing(user._id.toString(), media._id.toString(), 'READY', 'Upload complete', enhancedMedia);
 
       res.status(201).json({
         success: true,
@@ -422,6 +474,7 @@ router.post(
     }
   }
 );
+
 
 // POST /api/v1/uploads/initiate-resumable (Initiate large chunked / resumable upload)
 

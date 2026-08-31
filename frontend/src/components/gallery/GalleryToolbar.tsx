@@ -158,7 +158,7 @@ export const GalleryToolbar: React.FC<GalleryToolbarProps> = ({
         ref={fileInputRef}
         onChange={handleFileInput}
         multiple
-        accept="image/*,video/*"
+        accept="image/*,video/*,.mp4,.mov,.avi,.mkv,.webm,.3gp,.m4v,.flv,.heic,.heif,.jpg,.jpeg,.png,.webp"
         className="hidden"
       />
 
