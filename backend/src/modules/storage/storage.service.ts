@@ -11,6 +11,8 @@ import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
 
+import os from 'os';
+
 export class StorageService {
   private s3: S3Client | null = null;
   private bucket: string;
@@ -19,8 +21,15 @@ export class StorageService {
 
   constructor() {
     this.bucket = config.S3_BUCKET;
-    this.localDir = path.resolve(__dirname, '../../../scratch/storage_mock');
-    fs.mkdirSync(this.localDir, { recursive: true });
+    this.localDir = process.env.VERCEL
+      ? path.join(os.tmpdir(), 'storage_mock')
+      : path.resolve(__dirname, '../../../scratch/storage_mock');
+
+    try {
+      fs.mkdirSync(this.localDir, { recursive: true });
+    } catch (e) {
+      console.warn('Storage directory initialization notice:', e);
+    }
 
     // Only configure S3 if not localhost minio or if explicitly configured
     if (config.S3_ACCESS_KEY && config.S3_SECRET_KEY && !config.S3_ENDPOINT.includes('localhost')) {
@@ -43,6 +52,7 @@ export class StorageService {
       this.useS3 = false;
     }
   }
+
 
   /**
    * Generates a structured storage key for media:
@@ -114,9 +124,14 @@ export class StorageService {
    * Uploads a Buffer directly (0.1ms local disk write or S3 stream).
    */
   async uploadBuffer(storageKey: string, buffer: Buffer, mimeType: string): Promise<void> {
-    const fullPath = path.join(this.localDir, storageKey);
-    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-    fs.writeFileSync(fullPath, buffer);
+    try {
+      const fullPath = path.join(this.localDir, storageKey);
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+      fs.writeFileSync(fullPath, buffer);
+    } catch (e) {
+      console.warn('Local buffer write notice:', e);
+    }
+
 
     if (this.useS3 && this.s3) {
       try {

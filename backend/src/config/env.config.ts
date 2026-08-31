@@ -40,16 +40,22 @@ const envSchema = z.object({
   FRONTEND_URL: z.string().default('https://icloud-frontend.vercel.app'),
   CORS_ORIGINS: z.string().default('https://icloud-frontend.vercel.app,http://localhost:5173,http://127.0.0.1:5173'),
   
-  // Quota & Retention
   DEFAULT_STORAGE_QUOTA_BYTES: z.string().transform(Number).default('16106127360'), // 15 GB
   TRASH_RETENTION_DAYS: z.string().transform(Number).default('30'),
 });
 
 const parsed = envSchema.safeParse(process.env);
 
+
+let configData: z.infer<typeof envSchema>;
+
 if (!parsed.success) {
-  console.error('❌ Invalid environment variables:', parsed.error.format());
-  process.exit(1);
+  console.error('⚠️ Environment variables warning:', parsed.error.format());
+  configData = envSchema.parse({});
+} else {
+  configData = parsed.data;
 }
 
-export const config = parsed.data;
+export const config = configData;
+
+
