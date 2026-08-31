@@ -57,10 +57,14 @@ router.get('/', authGuard, async (req: AuthenticatedRequest, res: Response, next
 
         let coverUrl = null;
         if (coverMedia) {
-          coverUrl = await storageService.getPresignedDownloadUrl(
-            coverMedia.thumbnailKey || coverMedia.storageKey,
-            1800
-          );
+          coverUrl = coverMedia.thumbnailBase64
+            ? `data:${coverMedia.mimeType || 'image/jpeg'};base64,${coverMedia.thumbnailBase64}`
+            : (coverMedia.dataBase64
+                ? `data:${coverMedia.mimeType || 'image/jpeg'};base64,${coverMedia.dataBase64}`
+                : await storageService.getPresignedDownloadUrl(
+                    coverMedia.thumbnailKey || coverMedia.storageKey,
+                    1800
+                  ));
         }
 
         const albumItems = await AlbumItemModel.find({ albumId: album._id }).select('mediaId').lean();
@@ -140,13 +144,17 @@ router.get('/:id', authGuard, requireAlbumOwnership, async (req: AuthenticatedRe
         .filter((item) => mediaMap.has(item.mediaId.toString()))
         .map(async (item) => {
           const media = mediaMap.get(item.mediaId.toString())!;
-          const thumbnailUrl = media.thumbnailKey
-            ? await storageService.getPresignedDownloadUrl(media.thumbnailKey, 1800)
-            : await storageService.getPresignedDownloadUrl(media.storageKey, 1800);
+          const thumbnailUrl = media.thumbnailBase64
+            ? `data:${media.mimeType || 'image/jpeg'};base64,${media.thumbnailBase64}`
+            : (media.dataBase64
+                ? `data:${media.mimeType || 'image/jpeg'};base64,${media.dataBase64}`
+                : await storageService.getPresignedDownloadUrl(media.thumbnailKey || media.storageKey, 1800));
 
-          const previewUrl = media.previewKey
-            ? await storageService.getPresignedDownloadUrl(media.previewKey, 1800)
-            : thumbnailUrl;
+          const previewUrl = media.dataBase64
+            ? `data:${media.mimeType || 'image/jpeg'};base64,${media.dataBase64}`
+            : (media.previewKey
+                ? await storageService.getPresignedDownloadUrl(media.previewKey, 1800)
+                : thumbnailUrl);
 
           return {
             ...media,
@@ -157,6 +165,7 @@ router.get('/:id', authGuard, requireAlbumOwnership, async (req: AuthenticatedRe
           };
         })
     );
+
 
     const albumObj = {
       ...(album.toObject ? album.toObject() : album),
