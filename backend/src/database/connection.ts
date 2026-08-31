@@ -1,34 +1,44 @@
 import mongoose from 'mongoose';
 import { config } from '../config/env.config';
+import { AppError } from '../common/middleware/error.middleware';
 
-let isConnected = false;
+let cachedConn: typeof mongoose | null = null;
+let cachedPromise: Promise<typeof mongoose> | null = null;
 
 export async function connectDatabase(): Promise<typeof mongoose> {
-  if (mongoose.connection.readyState >= 1 || isConnected) {
-    return mongoose;
+  if (cachedConn && mongoose.connection.readyState >= 1) {
+    return cachedConn;
   }
 
-  try {
+  if (!cachedPromise) {
     mongoose.set('strictQuery', true);
-    const conn = await mongoose.connect(config.MONGODB_URI, {
+    cachedPromise = mongoose.connect(config.MONGODB_URI, {
       autoIndex: true,
       serverSelectionTimeoutMS: 5000,
+      connectTimeoutMS: 5000,
+    }).then((conn) => {
+      cachedConn = conn;
+      console.log(`✅ MongoDB Connected successfully: ${conn.connection.host}`);
+      return conn;
+    }).catch((err) => {
+      cachedPromise = null;
+      console.error('❌ MongoDB Connection Error:', err.message);
+      throw new AppError(
+        'Database connection failed: Please allow access from anywhere (0.0.0.0/0) in MongoDB Atlas Network Access.',
+        500,
+        'DATABASE_CONNECTION_ERROR',
+        err.message
+      );
     });
-    isConnected = true;
-    console.log(`✅ MongoDB Connected successfully: ${conn.connection.host}`);
-    return conn;
-  } catch (error) {
-    console.error('❌ MongoDB Connection Error:', error);
-    // Don't crash abruptly on serverless platforms
-    if (config.NODE_ENV === 'production' && !process.env.VERCEL) {
-      process.exit(1);
-    }
-    return mongoose;
   }
+
+  return cachedPromise;
 }
 
 export async function disconnectDatabase(): Promise<void> {
-  isConnected = false;
+  cachedConn = null;
+  cachedPromise = null;
   await mongoose.disconnect();
 }
+
 
