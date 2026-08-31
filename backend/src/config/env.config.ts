@@ -17,10 +17,11 @@ const envSchema = z.object({
   REDIS_URL: z.string().default('redis://localhost:6379'),
   
   // JWT
-  JWT_SECRET: z.string().min(16).default('super_secure_access_token_secret_key_cloudvault_2026_at_least_32_chars'),
-  REFRESH_TOKEN_SECRET: z.string().min(16).default('super_secure_refresh_token_secret_key_cloudvault_2026_at_least_32_chars'),
-  JWT_ACCESS_EXPIRATION: z.string().default('15m'),
-  JWT_REFRESH_EXPIRATION: z.string().default('7d'),
+  JWT_SECRET: z.string().default('super_secure_access_token_secret_key_cloudvault_2026_at_least_32_chars').transform((v) => (v && v.trim() ? v.trim() : 'super_secure_access_token_secret_key_cloudvault_2026_at_least_32_chars')),
+  REFRESH_TOKEN_SECRET: z.string().default('super_secure_refresh_token_secret_key_cloudvault_2026_at_least_32_chars').transform((v) => (v && v.trim() ? v.trim() : 'super_secure_refresh_token_secret_key_cloudvault_2026_at_least_32_chars')),
+  JWT_ACCESS_EXPIRATION: z.string().default('15m').transform((v) => (v && v.trim() ? v.trim() : '15m')),
+  JWT_REFRESH_EXPIRATION: z.string().default('7d').transform((v) => (v && v.trim() ? v.trim() : '7d')),
+
   
   // WebAuthn / Passkeys
   WEBAUTHN_RP_NAME: z.string().default('CloudVault'),

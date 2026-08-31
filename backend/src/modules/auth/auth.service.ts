@@ -330,11 +330,14 @@ export class AuthService {
       throw new AppError('User not found.', 401, 'USER_NOT_FOUND');
     }
 
+    const refreshExp = (config.JWT_REFRESH_EXPIRATION && String(config.JWT_REFRESH_EXPIRATION).trim()) || '7d';
+    const accessExp = (config.JWT_ACCESS_EXPIRATION && String(config.JWT_ACCESS_EXPIRATION).trim()) || '15m';
+
     // Rotate refresh token
     const newRefreshToken = jwt.sign(
       { userId: user._id.toString(), sessionId: session._id.toString() },
-      config.REFRESH_TOKEN_SECRET,
-      { expiresIn: config.JWT_REFRESH_EXPIRATION as any }
+      config.REFRESH_TOKEN_SECRET || 'super_secure_refresh_token_secret_key_cloudvault_2026_at_least_32_chars',
+      { expiresIn: refreshExp as any }
     );
 
     session.refreshTokenHash = CryptoUtil.hashString(newRefreshToken);
@@ -349,9 +352,10 @@ export class AuthService {
         sessionId: session._id.toString(),
         role: user.role,
       },
-      config.JWT_SECRET,
-      { expiresIn: config.JWT_ACCESS_EXPIRATION as any }
+      config.JWT_SECRET || 'super_secure_access_token_secret_key_cloudvault_2026_at_least_32_chars',
+      { expiresIn: accessExp as any }
     );
+
 
     return {
       accessToken: newAccessToken,
@@ -437,11 +441,14 @@ export class AuthService {
     const deviceId = CryptoUtil.generateRandomToken(16);
     const tempSessionId = CryptoUtil.generateRandomToken(12);
 
+    const refreshExp = (config.JWT_REFRESH_EXPIRATION && String(config.JWT_REFRESH_EXPIRATION).trim()) || '7d';
+    const accessExp = (config.JWT_ACCESS_EXPIRATION && String(config.JWT_ACCESS_EXPIRATION).trim()) || '15m';
+
     // Initial dummy refresh token for hash creation
     const initialRefreshToken = jwt.sign(
       { userId: user._id.toString(), temp: tempSessionId },
-      config.REFRESH_TOKEN_SECRET,
-      { expiresIn: config.JWT_REFRESH_EXPIRATION as any }
+      config.REFRESH_TOKEN_SECRET || 'super_secure_refresh_token_secret_key_cloudvault_2026_at_least_32_chars',
+      { expiresIn: refreshExp as any }
     );
 
     const session = await SessionModel.create({
@@ -462,8 +469,8 @@ export class AuthService {
     // Real refresh token tied to session ID
     const refreshToken = jwt.sign(
       { userId: user._id.toString(), sessionId: session._id.toString() },
-      config.REFRESH_TOKEN_SECRET,
-      { expiresIn: config.JWT_REFRESH_EXPIRATION as any }
+      config.REFRESH_TOKEN_SECRET || 'super_secure_refresh_token_secret_key_cloudvault_2026_at_least_32_chars',
+      { expiresIn: refreshExp as any }
     );
 
     session.refreshTokenHash = CryptoUtil.hashString(refreshToken);
@@ -476,9 +483,10 @@ export class AuthService {
         sessionId: session._id.toString(),
         role: user.role,
       },
-      config.JWT_SECRET,
-      { expiresIn: config.JWT_ACCESS_EXPIRATION as any }
+      config.JWT_SECRET || 'super_secure_access_token_secret_key_cloudvault_2026_at_least_32_chars',
+      { expiresIn: accessExp as any }
     );
+
 
     return {
       accessToken,
