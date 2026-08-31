@@ -92,7 +92,19 @@ app.get('/', (_req, res) => {
 
 // 3. Versioned API Routes (/api/v1)
 const v1 = express.Router();
+
+v1.get('/', (_req, res) => {
+  res.json({
+    status: 'online',
+    message: 'CloudVault API v1 is active',
+    platform: 'CloudVault Private Cloud Photos & Videos',
+    version: '1.0.0',
+    timestamp: new Date().toISOString(),
+  });
+});
+
 v1.use('/auth', authRouter);
+
 v1.use('/security/sessions', sessionsRouter);
 v1.use('/uploads', uploadsRouter);
 v1.use('/media', mediaRouter);
