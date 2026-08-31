@@ -67,9 +67,10 @@ export const UploadQueueTray: React.FC = () => {
           <button
             onClick={() => {
               clearCompleted();
-              if (inProgressCount === 0) setIsOpen(false);
+              setIsOpen(false);
             }}
             className="w-6 h-6 rounded-lg flex items-center justify-center text-[#8E8E93] hover:text-[#1D1D1F] hover:bg-[#E5E5EA]/60 transition-all"
+            title="Close"
           >
             <X className="w-4 h-4" />
           </button>
@@ -82,13 +83,13 @@ export const UploadQueueTray: React.FC = () => {
           {queue.map((item) => (
             <div key={item.id} className="p-2 space-y-1.5 hover:bg-[#F9FAFB] rounded-xl transition-colors">
               <div className="flex items-center justify-between">
-                <span className="font-medium text-[#1D1D1F] truncate max-w-[200px]">
+                <span className="font-medium text-[#1D1D1F] truncate max-w-[200px]" title={item.name}>
                   {item.name}
                 </span>
                 <div className="flex items-center space-x-1.5">
                   {item.status === 'PENDING' && (
                     <span className="text-[10px] font-medium text-[#8E8E93]">
-                      Queued
+                      Waiting...
                     </span>
                   )}
                   {item.status === 'UPLOADING' && (
@@ -105,11 +106,14 @@ export const UploadQueueTray: React.FC = () => {
                     <CheckCircle2 className="w-3.5 h-3.5 text-[#34C759]" />
                   )}
                   {item.status === 'FAILED' && (
-                    <AlertCircle className="w-3.5 h-3.5 text-[#FF3B30]" />
+                    <span title={item.error || 'Upload error'}>
+                      <AlertCircle className="w-3.5 h-3.5 text-[#FF3B30]" />
+                    </span>
                   )}
                   <button
                     onClick={() => removeItem(item.id)}
                     className="text-[#8E8E93] hover:text-[#1D1D1F] ml-1"
+                    title="Remove from queue"
                   >
                     <X className="w-3 h-3" />
                   </button>
