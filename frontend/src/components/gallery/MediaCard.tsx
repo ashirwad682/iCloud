@@ -1,5 +1,5 @@
-import React from 'react';
-import { Play, Heart, CheckCircle2, Circle, Loader2 } from 'lucide-react';
+import React, { useState } from 'react';
+import { Play, Heart, CheckCircle2, Circle, Loader2, Image as ImageIcon } from 'lucide-react';
 import { Media } from '../../types';
 import { useUIStore } from '../../stores/uiStore';
 import { api, resolveMediaUrl } from '../../services/api';
@@ -22,6 +22,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
     gridMode,
   } = useUIStore();
 
+  const [hasImgError, setHasImgError] = useState(false);
   const isSelected = selectedMediaIds.includes(media._id);
   const isVideo = media.mediaType === 'VIDEO' || media.mimeType?.startsWith('video/') || media.originalName?.toLowerCase().endsWith('.mp4');
   const isProcessing = media.status === 'UPLOADING' || media.status === 'PROCESSING';
@@ -52,7 +53,6 @@ export const MediaCard: React.FC<MediaCardProps> = ({
 
   const mediaUrl = resolveMediaUrl(media.thumbnailUrl || media.previewUrl || media.originalUrl);
 
-
   return (
     <div
       onClick={handleCardClick}
@@ -77,12 +77,22 @@ export const MediaCard: React.FC<MediaCardProps> = ({
           <Loader2 className="w-5 h-5 text-[#0071E3] animate-spin mb-1.5" />
           <span className="text-[11px] font-medium text-[#86868B]">Processing...</span>
         </div>
+      ) : hasImgError ? (
+        <div className="w-full h-full flex flex-col items-center justify-center p-3 text-center bg-[#F2F2F7] dark:bg-[#2C2C2E]">
+          <div className="w-9 h-9 rounded-xl bg-black/5 dark:bg-white/10 flex items-center justify-center mb-1.5 text-[#86868B]">
+            <ImageIcon className="w-4 h-4" />
+          </div>
+          <span className="text-[10px] font-medium text-[#86868B] truncate max-w-[90%]">
+            {media.originalName}
+          </span>
+        </div>
       ) : isVideo ? (
         <video
           src={mediaUrl}
           preload="metadata"
           muted
           playsInline
+          onError={() => setHasImgError(true)}
           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 pointer-events-none"
         />
       ) : (
@@ -90,9 +100,11 @@ export const MediaCard: React.FC<MediaCardProps> = ({
           src={mediaUrl}
           alt={media.originalName}
           loading="lazy"
+          onError={() => setHasImgError(true)}
           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
         />
       )}
+
 
       {/* Video Indicator */}
       {isVideo && (
