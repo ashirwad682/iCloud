@@ -31,26 +31,29 @@ export function resolveMediaUrl(url?: string): string {
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('cv_access_token');
   if (token && config.headers) {
-    config.headers.Authorization = `Bearer ${token}`;
+    if (typeof (config.headers as any).set === 'function') {
+      (config.headers as any).set('Authorization', `Bearer ${token}`);
+    } else {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
   }
   if (config.data instanceof FormData && config.headers) {
-    delete config.headers['Content-Type'];
-    delete config.headers['content-type'];
+    if (typeof (config.headers as any).delete === 'function') {
+      (config.headers as any).delete('Content-Type');
+      (config.headers as any).delete('content-type');
+    }
+    delete (config.headers as any)['Content-Type'];
+    delete (config.headers as any)['content-type'];
   }
   return config;
 });
-
 
 // Intercept responses to handle token expiration & refresh
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
-    if (
-      error.response?.status === 401 &&
-      error.response?.data?.error?.code === 'TOKEN_EXPIRED' &&
-      !originalRequest._retry
-    ) {
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
       originalRequest._retry = true;
       const refreshToken = localStorage.getItem('cv_refresh_token');
       if (refreshToken) {
@@ -60,10 +63,14 @@ api.interceptors.response.use(
             const { accessToken, refreshToken: newRefreshToken } = res.data.data;
             localStorage.setItem('cv_access_token', accessToken);
             localStorage.setItem('cv_refresh_token', newRefreshToken);
-            originalRequest.headers.Authorization = `Bearer ${accessToken}`;
+            if (typeof (originalRequest.headers as any)?.set === 'function') {
+              (originalRequest.headers as any).set('Authorization', `Bearer ${accessToken}`);
+            } else if (originalRequest.headers) {
+              originalRequest.headers.Authorization = `Bearer ${accessToken}`;
+            }
             return api(originalRequest);
           }
-        } catch (refreshErr) {
+        } catch {
           localStorage.removeItem('cv_access_token');
           localStorage.removeItem('cv_refresh_token');
           window.location.href = '/login';
@@ -73,3 +80,4 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
