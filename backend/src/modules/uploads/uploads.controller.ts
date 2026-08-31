@@ -270,15 +270,11 @@ router.post(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
       const uploadId = req.body.uploadId;
-      const originalName = req.body.originalName;
-      const mimeType = req.body.mimeType || 'application/octet-stream';
-      const size = Number(req.body.size);
       const partNumber = Number(req.body.partNumber);
       const totalParts = Number(req.body.totalParts);
-      const albumId = req.body.albumId;
-      const isHidden = req.body.isHidden === 'true' || req.body.isHidden === true;
+      const size = Number(req.body.size);
 
-      if (!uploadId || !originalName || isNaN(size) || isNaN(partNumber) || isNaN(totalParts)) {
+      if (!uploadId || isNaN(partNumber) || isNaN(totalParts)) {
         throw new AppError('Invalid chunk upload parameters.', 400, 'INVALID_PARAMS');
       }
 
@@ -294,16 +290,15 @@ router.post(
       }
 
       const user = req.user!;
-      const normalizedMime = normalizeMimeType(mimeType, originalName);
 
       // Quota check on first chunk
-      if (partNumber === 1) {
+      if (partNumber === 1 && !isNaN(size)) {
         if (user.storageUsedBytes + size > user.storageQuotaBytes) {
           throw new AppError('Storage quota exceeded.', 403, 'QUOTA_EXCEEDED');
         }
       }
 
-      // Store chunk in dedicated UploadChunk collection (binary Buffer or Base64)
+      // Store chunk in dedicated UploadChunk collection
       await UploadChunkModel.updateOne(
         { uploadId, partNumber },
         {
@@ -318,31 +313,49 @@ router.post(
         { upsert: true }
       );
 
-      // Count received parts
-      const receivedCount = await UploadChunkModel.countDocuments({ uploadId });
+      res.json({
+        success: true,
+        data: {
+          uploadId,
+          partNumber,
+          totalParts,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
-      if (receivedCount < totalParts) {
-        return res.json({
-          success: true,
-          data: {
-            uploadId,
-            receivedParts: receivedCount,
-            totalParts,
-            isComplete: false,
-          },
-        });
+// POST /api/v1/uploads/complete-chunked (Finalize and assemble chunked upload)
+router.post(
+  '/complete-chunked',
+  authGuard,
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const { uploadId, originalName, mimeType, size, albumId, isHidden } = req.body;
+      const user = req.user!;
+
+      if (!uploadId || !originalName) {
+        throw new AppError('Upload ID and file name are required.', 400, 'MISSING_PARAMS');
       }
 
-      // All chunks received! Retrieve and assemble in sequence
+      const normalizedMime = normalizeMimeType(mimeType || 'application/octet-stream', originalName);
+
+      // Retrieve all chunks in order
       const allChunks = await UploadChunkModel.find({ uploadId })
         .sort({ partNumber: 1 })
         .lean();
+
+      if (!allChunks || allChunks.length === 0) {
+        throw new AppError('No uploaded chunks found for this session.', 404, 'CHUNKS_NOT_FOUND');
+      }
 
       const fullBuffer = Buffer.concat(
         allChunks.map((c) => (c.dataBuffer as Buffer) || Buffer.from(c.dataBase64 || '', 'base64'))
       );
 
-      // Clean up chunks
+      // Clean up chunk documents
       await UploadChunkModel.deleteMany({ uploadId });
 
       const lowerName = originalName.toLowerCase();

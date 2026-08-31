@@ -220,16 +220,12 @@ export const useUploadStore = create<UploadState>((set, get) => ({
 
         // Execute chunks using parallel worker pool
         const partsQueue = Array.from({ length: totalParts }, (_, i) => i + 1);
-        let finalResponse: any = null;
 
         const worker = async () => {
           while (partsQueue.length > 0) {
             const part = partsQueue.shift();
             if (part !== undefined) {
-              const res = await uploadSingleChunk(part);
-              if (res?.data?.isComplete) {
-                finalResponse = res;
-              }
+              await uploadSingleChunk(part);
             }
           }
         };
@@ -240,8 +236,26 @@ export const useUploadStore = create<UploadState>((set, get) => ({
         );
         await Promise.all(activeWorkers);
 
-        if (finalResponse?.data?.media) {
-          mediaResult = finalResponse.data.media;
+        // Mark as processing while assembling
+        get().updateItem(item.id, {
+          status: 'PROCESSING',
+          progress: 99,
+        });
+
+        // Finalize assembly on backend
+        const completeRes = await api.post('/uploads/complete-chunked', {
+          uploadId,
+          originalName: item.file.name,
+          mimeType,
+          size: item.file.size,
+          albumId: item.albumId,
+          isHidden: item.isHidden,
+        });
+
+        if (completeRes.data?.success && completeRes.data?.data?.media) {
+          mediaResult = completeRes.data.data.media;
+        } else {
+          throw new Error('Upload finalization failed on server.');
         }
       }
 
