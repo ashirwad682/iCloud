@@ -87,14 +87,21 @@ export const MediaCard: React.FC<MediaCardProps> = ({
           </span>
         </div>
       ) : isVideo ? (
-        <video
-          src={mediaUrl}
-          preload="metadata"
-          muted
-          playsInline
-          onError={() => setHasImgError(true)}
-          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 pointer-events-none"
-        />
+        <div className="w-full h-full relative bg-black/80 flex items-center justify-center overflow-hidden">
+          <video
+            src={mediaUrl}
+            preload="metadata"
+            muted
+            playsInline
+            onError={() => setHasImgError(true)}
+            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 pointer-events-none"
+          />
+          <div className="absolute inset-0 bg-black/25 flex items-center justify-center group-hover:bg-black/10 transition-colors pointer-events-none">
+            <div className="w-8 h-8 rounded-full bg-black/50 backdrop-blur-md flex items-center justify-center text-white shadow-lg border border-white/20">
+              <Play className="w-3.5 h-3.5 fill-white translate-x-0.5" />
+            </div>
+          </div>
+        </div>
       ) : (
         <img
           src={mediaUrl}
@@ -104,6 +111,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
         />
       )}
+
 
 
       {/* Video Indicator */}
