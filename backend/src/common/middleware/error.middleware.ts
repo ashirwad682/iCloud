@@ -50,13 +50,15 @@ export function errorMiddleware(
     return;
   }
 
-  // Handle generic / unexpected internal errors (never leak stack trace)
+  // Handle generic / unexpected internal errors
   console.error('💥 Unhandled Exception:', err);
   res.status(500).json({
     success: false,
     error: {
       code: 'INTERNAL_SERVER_ERROR',
-      message: 'An unexpected error occurred. Please try again later.',
+      message: err?.message || 'An unexpected error occurred. Please try again later.',
+      details: err?.message,
     },
   });
 }
+
