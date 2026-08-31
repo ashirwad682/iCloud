@@ -28,103 +28,120 @@ import { notificationsRouter } from './modules/notifications/notifications.contr
 import { adminRouter } from './modules/admin/admin.controller';
 import { paymentsRouter } from './modules/payments/payments.controller';
 
-async function bootstrap() {
-  const app = express();
-  const server = http.createServer(app);
+const app = express();
+const server = http.createServer(app);
 
-  // 1. Connect MongoDB
-  await connectDatabase();
+// DB auto-connect middleware for serverless invocations
+app.use(async (_req, _res, next) => {
+  try {
+    await connectDatabase();
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
-  // 2. Initialize Real-Time WebSockets
-  socketGateway.init(server);
+// 1. Security & Global Middleware
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginEmbedderPolicy: false,
+  })
+);
 
-  // 3. Security & Global Middleware
-  app.use(
-    helmet({
-      crossOriginResourcePolicy: { policy: 'cross-origin' },
-      crossOriginEmbedderPolicy: false,
-    })
-  );
+const allowedOrigins = config.CORS_ORIGINS.split(',').map((o) => o.trim());
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+        callback(null, true);
+      } else {
+        callback(null, true); // Dev/flexible fallback
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-share-password'],
+  })
+);
 
-  const allowedOrigins = config.CORS_ORIGINS.split(',').map((o) => o.trim());
-  app.use(
-    cors({
-      origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) {
-          callback(null, true);
-        } else {
-          callback(null, true); // Dev flexible fallback
-        }
-      },
-      credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'x-share-password'],
-    })
-  );
+app.use(morgan('dev'));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(cookieParser());
+app.use(advancedSecurityMiddleware);
+app.use(standardRateLimiter);
 
-  app.use(morgan('dev'));
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-  app.use(cookieParser());
-  app.use(advancedSecurityMiddleware);
-  app.use(standardRateLimiter);
+// 2. Health Check
+app.get('/health', (_req, res) => {
+  res.json({
+    status: 'healthy',
+    platform: 'CloudVault Private Cloud Storage',
+    timestamp: new Date().toISOString(),
+  });
+});
 
-  // 4. Health Check
-  app.get('/health', (_req, res) => {
-    res.json({
-      status: 'healthy',
-      platform: 'CloudVault Private Cloud Storage',
+app.get('/', (_req, res) => {
+  res.json({
+    status: 'online',
+    platform: 'CloudVault Private Cloud API',
+    docs: '/api/v1',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// 3. Versioned API Routes (/api/v1)
+const v1 = express.Router();
+v1.use('/auth', authRouter);
+v1.use('/security/sessions', sessionsRouter);
+v1.use('/uploads', uploadsRouter);
+v1.use('/media', mediaRouter);
+v1.use('/albums', albumsRouter);
+v1.use('/shared-albums', sharedAlbumsRouter);
+v1.use('/shared-album-invitations', invitationsRouter);
+v1.use('/shares', sharesRouter);
+v1.use('/trash', trashRouter);
+v1.use('/security', securityRouter);
+v1.use('/storage', storageRouter);
+v1.use('/search', searchRouter);
+v1.use('/notifications', notificationsRouter);
+v1.use('/admin', adminRouter);
+v1.use('/payments', paymentsRouter);
+
+// Seed / API Status Endpoint
+v1.get('/seed', (_req, res) => {
+  res.json({
+    success: true,
+    message: 'CloudVault API v1 Seed & Status Endpoint Active',
+    data: {
+      status: 'Operational',
+      database: 'MongoDB Connected',
+      platform: 'CloudVault Private Cloud Photos & Videos',
+      version: '1.0.0',
       timestamp: new Date().toISOString(),
-    });
+    },
   });
+});
 
-  // 5. Versioned API Routes (/api/v1)
-  const v1 = express.Router();
-  v1.use('/auth', authRouter);
-  v1.use('/security/sessions', sessionsRouter);
-  v1.use('/uploads', uploadsRouter);
-  v1.use('/media', mediaRouter);
-  v1.use('/albums', albumsRouter);
-  v1.use('/shared-albums', sharedAlbumsRouter);
-  v1.use('/shared-album-invitations', invitationsRouter);
-  v1.use('/shares', sharesRouter);
-  v1.use('/trash', trashRouter);
-  v1.use('/security', securityRouter);
-  v1.use('/storage', storageRouter);
-  v1.use('/search', searchRouter);
-  v1.use('/notifications', notificationsRouter);
-  v1.use('/admin', adminRouter);
-  v1.use('/payments', paymentsRouter);
+app.use('/api/v1', v1);
 
-  // Seed / API Status Endpoint
-  v1.get('/seed', (_req, res) => {
-    res.json({
-      success: true,
-      message: 'CloudVault API v1 Seed & Status Endpoint Active',
-      data: {
-        status: 'Operational',
-        database: 'MongoDB Connected',
-        platform: 'CloudVault Private Cloud Photos & Videos',
-        version: '1.0.0',
-        timestamp: new Date().toISOString(),
-      },
-    });
-  });
+// 4. Global Error Handler
+app.use(errorMiddleware);
 
-  app.use('/api/v1', v1);
-
-  // 6. Global Error Handler
-  app.use(errorMiddleware);
-
-  // 7. Start Server
+// 5. Start Server (Only when not running in Vercel Serverless environment)
+if (!process.env.VERCEL) {
   const PORT = config.PORT || 3000;
-  server.listen(PORT, () => {
-    console.log(`🚀 CloudVault Server running on http://localhost:${PORT}`);
-    console.log(`📡 API Base: http://localhost:${PORT}/api/v1`);
+  connectDatabase().then(() => {
+    socketGateway.init(server);
+    server.listen(PORT, () => {
+      console.log(`🚀 CloudVault Server running on http://localhost:${PORT}`);
+      console.log(`📡 API Base: http://localhost:${PORT}/api/v1`);
+    });
+  }).catch((err) => {
+    console.error('Fatal Server Boot Error:', err);
   });
 }
 
-bootstrap().catch((err) => {
-  console.error('Fatal Server Boot Error:', err);
-  process.exit(1);
-});
+export default app;
+export { app };
+

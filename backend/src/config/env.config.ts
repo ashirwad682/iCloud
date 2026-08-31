@@ -37,8 +37,8 @@ const envSchema = z.object({
   
   // Services
   PYTHON_SERVICE_URL: z.string().default('http://localhost:8000'),
-  FRONTEND_URL: z.string().default('http://localhost:5173'),
-  CORS_ORIGINS: z.string().default('http://localhost:5173,http://127.0.0.1:5173'),
+  FRONTEND_URL: z.string().default('https://icloud-frontend.vercel.app'),
+  CORS_ORIGINS: z.string().default('https://icloud-frontend.vercel.app,http://localhost:5173,http://127.0.0.1:5173'),
   
   // Quota & Retention
   DEFAULT_STORAGE_QUOTA_BYTES: z.string().transform(Number).default('16106127360'), // 15 GB
