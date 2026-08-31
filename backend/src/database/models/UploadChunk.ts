@@ -5,7 +5,8 @@ export interface IUploadChunkDoc extends Document {
   userId: mongoose.Types.ObjectId;
   partNumber: number;
   totalParts: number;
-  dataBase64: string;
+  dataBuffer?: Buffer;
+  dataBase64?: string;
   createdAt: Date;
 }
 
@@ -30,9 +31,11 @@ const UploadChunkSchema = new Schema<IUploadChunkDoc>(
       type: Number,
       required: true,
     },
+    dataBuffer: {
+      type: Buffer,
+    },
     dataBase64: {
       type: String,
-      required: true,
     },
     createdAt: {
       type: Date,

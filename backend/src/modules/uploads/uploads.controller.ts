@@ -262,78 +262,90 @@ router.post(
   }
 );
 
-// POST /api/v1/uploads/chunk (High-speed chunked upload for videos and large media)
+// POST /api/v1/uploads/chunk (High-speed binary / chunked upload for videos and large media)
 router.post(
   '/chunk',
   authGuard,
+  upload.single('chunk'),
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
-      const schema = z.object({
-        uploadId: z.string().min(1),
-        originalName: z.string().min(1),
-        mimeType: z.string().min(1),
-        size: z.number().positive(),
-        partNumber: z.number().int().min(1),
-        totalParts: z.number().int().min(1),
-        chunkBase64: z.string().min(1),
-        albumId: z.string().optional(),
-        isHidden: z.boolean().optional(),
-      });
+      const uploadId = req.body.uploadId;
+      const originalName = req.body.originalName;
+      const mimeType = req.body.mimeType || 'application/octet-stream';
+      const size = Number(req.body.size);
+      const partNumber = Number(req.body.partNumber);
+      const totalParts = Number(req.body.totalParts);
+      const albumId = req.body.albumId;
+      const isHidden = req.body.isHidden === 'true' || req.body.isHidden === true;
 
-      const data = schema.parse(req.body);
+      if (!uploadId || !originalName || isNaN(size) || isNaN(partNumber) || isNaN(totalParts)) {
+        throw new AppError('Invalid chunk upload parameters.', 400, 'INVALID_PARAMS');
+      }
+
+      let chunkBuffer: Buffer | null = null;
+      if (req.file && req.file.buffer) {
+        chunkBuffer = req.file.buffer;
+      } else if (req.body.chunkBase64) {
+        chunkBuffer = Buffer.from(req.body.chunkBase64, 'base64');
+      }
+
+      if (!chunkBuffer || chunkBuffer.length === 0) {
+        throw new AppError('Chunk data is missing.', 400, 'CHUNK_MISSING');
+      }
+
       const user = req.user!;
-      const normalizedMime = normalizeMimeType(data.mimeType, data.originalName);
+      const normalizedMime = normalizeMimeType(mimeType, originalName);
 
       // Quota check on first chunk
-      if (data.partNumber === 1) {
-        if (user.storageUsedBytes + data.size > user.storageQuotaBytes) {
+      if (partNumber === 1) {
+        if (user.storageUsedBytes + size > user.storageQuotaBytes) {
           throw new AppError('Storage quota exceeded.', 403, 'QUOTA_EXCEEDED');
         }
       }
 
-      // Store chunk in dedicated UploadChunk collection (prevents 16MB document size overflow)
+      // Store chunk in dedicated UploadChunk collection (binary Buffer or Base64)
       await UploadChunkModel.updateOne(
-        { uploadId: data.uploadId, partNumber: data.partNumber },
+        { uploadId, partNumber },
         {
           $set: {
-            uploadId: data.uploadId,
+            uploadId,
             userId: user._id,
-            partNumber: data.partNumber,
-            totalParts: data.totalParts,
-            dataBase64: data.chunkBase64,
+            partNumber,
+            totalParts,
+            dataBuffer: chunkBuffer,
           },
         },
         { upsert: true }
       );
 
       // Count received parts
-      const receivedCount = await UploadChunkModel.countDocuments({ uploadId: data.uploadId });
+      const receivedCount = await UploadChunkModel.countDocuments({ uploadId });
 
-      if (receivedCount < data.totalParts) {
+      if (receivedCount < totalParts) {
         return res.json({
           success: true,
           data: {
-            uploadId: data.uploadId,
+            uploadId,
             receivedParts: receivedCount,
-            totalParts: data.totalParts,
+            totalParts,
             isComplete: false,
           },
         });
       }
 
       // All chunks received! Retrieve and assemble in sequence
-      const allChunks = await UploadChunkModel.find({ uploadId: data.uploadId })
+      const allChunks = await UploadChunkModel.find({ uploadId })
         .sort({ partNumber: 1 })
         .lean();
 
       const fullBuffer = Buffer.concat(
-        allChunks.map((c) => Buffer.from(c.dataBase64, 'base64'))
+        allChunks.map((c) => (c.dataBuffer as Buffer) || Buffer.from(c.dataBase64 || '', 'base64'))
       );
 
       // Clean up chunks
-      await UploadChunkModel.deleteMany({ uploadId: data.uploadId });
+      await UploadChunkModel.deleteMany({ uploadId });
 
-      const lowerName = data.originalName.toLowerCase();
+      const lowerName = originalName.toLowerCase();
       const isVideo = normalizedMime.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm|3gp|m4v|flv)$/i.test(lowerName);
       const isImage = !isVideo;
       const mediaId = new mongoose.Types.ObjectId();
@@ -382,7 +394,7 @@ router.post(
             await storageService.uploadBuffer(previewKey, previewBuffer, 'image/webp');
           }
         } catch (err) {
-          console.warn(`Chunk Sharp processing notice for ${data.originalName}:`, err);
+          console.warn(`Chunk Sharp processing notice for ${originalName}:`, err);
         }
       }
 
@@ -390,7 +402,7 @@ router.post(
       const media = await MediaModel.create({
         _id: mediaId,
         ownerId: user._id,
-        originalName: data.originalName,
+        originalName,
         storageKey,
         originalKey: storageKey,
         thumbnailKey,
@@ -408,7 +420,7 @@ router.post(
         uploadedAt: new Date(),
         status: 'READY',
         isFavorite: false,
-        isHidden: !!data.isHidden,
+        isHidden: !!isHidden,
         isDeleted: false,
         metadata: {
           colorPalette: [dominantHex],
@@ -423,15 +435,15 @@ router.post(
       await UserModel.updateOne({ _id: user._id }, { $inc: { storageUsedBytes: fullBuffer.length } });
 
       // Auto-link album if requested
-      if (data.albumId && mongoose.Types.ObjectId.isValid(data.albumId)) {
+      if (albumId && mongoose.Types.ObjectId.isValid(albumId)) {
         try {
           const { AlbumItemModel } = await import('../../database/models/AlbumItem');
           const { AlbumModel } = await import('../../database/models/Album');
           await AlbumItemModel.updateOne(
-            { albumId: new mongoose.Types.ObjectId(data.albumId), mediaId: media._id },
+            { albumId: new mongoose.Types.ObjectId(albumId), mediaId: media._id },
             {
               $setOnInsert: {
-                albumId: new mongoose.Types.ObjectId(data.albumId),
+                albumId: new mongoose.Types.ObjectId(albumId),
                 mediaId: media._id,
                 ownerId: user._id,
                 addedAt: new Date(),
@@ -439,8 +451,8 @@ router.post(
             },
             { upsert: true }
           );
-          const totalCount = await AlbumItemModel.countDocuments({ albumId: new mongoose.Types.ObjectId(data.albumId) });
-          await AlbumModel.updateOne({ _id: new mongoose.Types.ObjectId(data.albumId) }, { $set: { itemCount: totalCount, coverMediaId: media._id } });
+          const totalCount = await AlbumItemModel.countDocuments({ albumId: new mongoose.Types.ObjectId(albumId) });
+          await AlbumModel.updateOne({ _id: new mongoose.Types.ObjectId(albumId) }, { $set: { itemCount: totalCount, coverMediaId: media._id } });
         } catch {}
       }
 

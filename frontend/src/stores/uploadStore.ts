@@ -10,6 +10,7 @@ interface UploadState {
   addFiles: (files: File[], albumId?: string, isHidden?: boolean) => void;
   updateItem: (id: string, updates: Partial<UploadItem>) => void;
   removeItem: (id: string) => void;
+  retryItem: (id: string) => void;
   clearCompleted: () => void;
   setIsOpen: (isOpen: boolean) => void;
   setIsMinimized: (isMinimized: boolean) => void;
@@ -17,11 +18,15 @@ interface UploadState {
   startUpload: (item: UploadItem) => Promise<void>;
 }
 
-// 6 Parallel Upload Workers for Maximum Throughput
-const MAX_CONCURRENT_UPLOADS = 6;
+// 4 Parallel File Upload Workers
+const MAX_CONCURRENT_FILES = 4;
+// 3 Parallel Chunk Upload Streams per large file
+const MAX_CONCURRENT_CHUNKS = 3;
+// 2.5MB Chunk size (optimal throughput under Vercel 4.5MB ceiling)
+const CHUNK_SIZE = 2.5 * 1024 * 1024;
 
 function detectMimeType(file: File): string {
-  if (file.type && file.type !== 'application/octet-stream') {
+  if (file.type && file.type !== 'application/octet-stream' && file.type !== 'binary/octet-stream') {
     return file.type;
   }
   const name = file.name.toLowerCase();
@@ -31,29 +36,16 @@ function detectMimeType(file: File): string {
   if (/\.mkv$/i.test(name)) return 'video/x-matroska';
   if (/\.avi$/i.test(name)) return 'video/x-msvideo';
   if (/\.3gp$/i.test(name)) return 'video/3gpp';
+  if (/\.flv$/i.test(name)) return 'video/x-flv';
   if (/\.(jpg|jpeg)$/i.test(name)) return 'image/jpeg';
   if (/\.png$/i.test(name)) return 'image/png';
   if (/\.webp$/i.test(name)) return 'image/webp';
   if (/\.gif$/i.test(name)) return 'image/gif';
-  if (/\.heic$/i.test(name)) return 'image/heic';
-  if (/\.heif$/i.test(name)) return 'image/heif';
+  if (/\.svg$/i.test(name)) return 'image/svg+xml';
+  if (/\.(heic|heif)$/i.test(name)) return 'image/heic';
+  if (/\.avif$/i.test(name)) return 'image/avif';
   return file.type || 'application/octet-stream';
 }
-
-// Helper to read blob chunk as Base64
-function readChunkAsBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const base64 = result.split(',')[1] || '';
-      resolve(base64);
-    };
-    reader.onerror = (e) => reject(e);
-    reader.readAsDataURL(blob);
-  });
-}
-
 
 export const useUploadStore = create<UploadState>((set, get) => ({
   queue: [],
@@ -71,6 +63,7 @@ export const useUploadStore = create<UploadState>((set, get) => ({
       name: file.name,
       size: file.size,
       progress: 0,
+      uploadedBytes: 0,
       status: 'PENDING',
       albumId,
       isHidden,
@@ -82,16 +75,15 @@ export const useUploadStore = create<UploadState>((set, get) => ({
       isMinimized: false,
     }));
 
-    // Trigger concurrent queue processor
     get().processQueue();
   },
 
   processQueue: () => {
     const { queue, activeUploadsCount, startUpload } = get();
-    if (activeUploadsCount >= MAX_CONCURRENT_UPLOADS) return;
+    if (activeUploadsCount >= MAX_CONCURRENT_FILES) return;
 
     const pendingItems = queue.filter((item) => item.status === 'PENDING');
-    const availableSlots = MAX_CONCURRENT_UPLOADS - activeUploadsCount;
+    const availableSlots = MAX_CONCURRENT_FILES - activeUploadsCount;
     const itemsToStart = pendingItems.slice(0, availableSlots);
 
     itemsToStart.forEach((item) => {
@@ -111,6 +103,14 @@ export const useUploadStore = create<UploadState>((set, get) => ({
     }));
   },
 
+  retryItem: (id) => {
+    const item = get().queue.find((i) => i.id === id);
+    if (item) {
+      get().updateItem(id, { status: 'PENDING', progress: 0, error: undefined });
+      get().processQueue();
+    }
+  },
+
   clearCompleted: () => {
     set((state) => ({
       queue: state.queue.filter((item) => item.status !== 'COMPLETED' && item.status !== 'FAILED'),
@@ -119,14 +119,21 @@ export const useUploadStore = create<UploadState>((set, get) => ({
 
   startUpload: async (item: UploadItem) => {
     set((state) => ({ activeUploadsCount: state.activeUploadsCount + 1 }));
-    get().updateItem(item.id, { status: 'UPLOADING', progress: 5 });
+    get().updateItem(item.id, {
+      status: 'UPLOADING',
+      progress: 2,
+      uploadedBytes: 0,
+      error: undefined,
+    });
+
+    const startTime = Date.now();
+    const mimeType = detectMimeType(item.file);
 
     try {
-      const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB chunk (well under Vercel's 4.5MB limit)
       let mediaResult: any = null;
 
+      // Mode 1: Fast Direct Upload for smaller media (<= 3.5MB)
       if (item.file.size <= 3.5 * 1024 * 1024) {
-        // Direct Fast Upload
         const formData = new FormData();
         formData.append('file', item.file);
         if (item.albumId) formData.append('albumId', item.albumId);
@@ -135,8 +142,19 @@ export const useUploadStore = create<UploadState>((set, get) => ({
         const res = await api.post('/uploads/direct', formData, {
           onUploadProgress: (progressEvent: any) => {
             if (progressEvent.total) {
-              const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-              get().updateItem(item.id, { progress: Math.min(percent, 98) });
+              const loaded = progressEvent.loaded || 0;
+              const percent = Math.min(Math.round((loaded * 100) / progressEvent.total), 98);
+              const elapsedSec = (Date.now() - startTime) / 1000;
+              const speed = elapsedSec > 0 ? loaded / elapsedSec : 0;
+              const remainingBytes = Math.max(0, item.file.size - loaded);
+              const timeRemaining = speed > 0 ? Math.round(remainingBytes / speed) : 0;
+
+              get().updateItem(item.id, {
+                progress: percent,
+                uploadedBytes: loaded,
+                speedBytesPerSec: speed,
+                timeRemainingSec: timeRemaining,
+              });
             }
           },
         });
@@ -145,48 +163,106 @@ export const useUploadStore = create<UploadState>((set, get) => ({
           mediaResult = res.data.data.media;
         }
       } else {
-        // Large File Chunked Upload (for large videos / high-res photos)
+        // Mode 2: High-Speed Multi-Chunk Parallel Streaming (for large videos / high-res RAW photos)
         const totalParts = Math.ceil(item.file.size / CHUNK_SIZE);
         const uploadId = Math.random().toString(36).substring(2, 11) + '-' + Date.now();
+        const partBytesLoaded: { [part: number]: number } = {};
 
-        for (let part = 1; part <= totalParts; part++) {
+        // Helper for single chunk upload with automatic retry
+        const uploadSingleChunk = async (part: number, retriesLeft = 3): Promise<any> => {
           const start = (part - 1) * CHUNK_SIZE;
           const end = Math.min(start + CHUNK_SIZE, item.file.size);
           const chunkBlob = item.file.slice(start, end);
-          const chunkBase64 = await readChunkAsBase64(chunkBlob);
+          const chunkSize = end - start;
 
-          const res = await api.post('/uploads/chunk', {
-            uploadId,
-            originalName: item.file.name,
-            mimeType: detectMimeType(item.file),
-            size: item.file.size,
-            partNumber: part,
-            totalParts,
-            chunkBase64,
-            albumId: item.albumId,
-            isHidden: item.isHidden,
-          });
+          const chunkFormData = new FormData();
+          chunkFormData.append('chunk', chunkBlob, `chunk-${part}.bin`);
+          chunkFormData.append('uploadId', uploadId);
+          chunkFormData.append('originalName', item.file.name);
+          chunkFormData.append('mimeType', mimeType);
+          chunkFormData.append('size', item.file.size.toString());
+          chunkFormData.append('partNumber', part.toString());
+          chunkFormData.append('totalParts', totalParts.toString());
+          if (item.albumId) chunkFormData.append('albumId', item.albumId);
+          if (item.isHidden) chunkFormData.append('isHidden', 'true');
 
-          const currentProgress = Math.round((part / totalParts) * 98);
-          get().updateItem(item.id, { progress: currentProgress });
+          try {
+            const res = await api.post('/uploads/chunk', chunkFormData, {
+              onUploadProgress: (progressEvent: any) => {
+                const loaded = progressEvent.loaded || 0;
+                partBytesLoaded[part] = Math.min(loaded, chunkSize);
 
-          if (res.data?.data?.isComplete) {
-            mediaResult = res.data.data.media;
+                // Aggregate across all parts in progress
+                const totalLoaded = Object.values(partBytesLoaded).reduce((a, b) => a + b, 0);
+                const percent = Math.min(Math.round((totalLoaded / item.file.size) * 98), 98);
+                const elapsedSec = (Date.now() - startTime) / 1000;
+                const speed = elapsedSec > 0 ? totalLoaded / elapsedSec : 0;
+                const remainingBytes = Math.max(0, item.file.size - totalLoaded);
+                const timeRemaining = speed > 0 ? Math.round(remainingBytes / speed) : 0;
+
+                get().updateItem(item.id, {
+                  progress: percent,
+                  uploadedBytes: totalLoaded,
+                  speedBytesPerSec: speed,
+                  timeRemainingSec: timeRemaining,
+                });
+              },
+            });
+            return res.data;
+          } catch (err) {
+            if (retriesLeft > 0) {
+              await new Promise((r) => setTimeout(r, 600 * (4 - retriesLeft)));
+              return uploadSingleChunk(part, retriesLeft - 1);
+            }
+            throw err;
           }
+        };
+
+        // Execute chunks using parallel worker pool
+        const partsQueue = Array.from({ length: totalParts }, (_, i) => i + 1);
+        let finalResponse: any = null;
+
+        const worker = async () => {
+          while (partsQueue.length > 0) {
+            const part = partsQueue.shift();
+            if (part !== undefined) {
+              const res = await uploadSingleChunk(part);
+              if (res?.data?.isComplete) {
+                finalResponse = res;
+              }
+            }
+          }
+        };
+
+        const activeWorkers = Array.from(
+          { length: Math.min(MAX_CONCURRENT_CHUNKS, totalParts) },
+          () => worker()
+        );
+        await Promise.all(activeWorkers);
+
+        if (finalResponse?.data?.media) {
+          mediaResult = finalResponse.data.media;
         }
       }
 
       if (mediaResult) {
         get().updateItem(item.id, {
           progress: 100,
+          uploadedBytes: item.file.size,
+          speedBytesPerSec: undefined,
+          timeRemainingSec: 0,
           status: 'COMPLETED',
           media: mediaResult,
         });
+
+        // Trigger optimistic refresh across active gallery & album views
         window.dispatchEvent(
           new CustomEvent('cv_media_uploaded', {
             detail: { media: mediaResult, albumId: item.albumId, isHidden: item.isHidden },
           })
         );
+      } else {
+        throw new Error('Upload completed without media response.');
       }
     } catch (err: any) {
       get().updateItem(item.id, {
@@ -195,9 +271,9 @@ export const useUploadStore = create<UploadState>((set, get) => ({
       });
     } finally {
       set((state) => ({ activeUploadsCount: Math.max(0, state.activeUploadsCount - 1) }));
-      // Process next in queue immediately
       get().processQueue();
     }
   },
 }));
+
 

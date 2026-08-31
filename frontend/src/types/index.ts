@@ -246,6 +246,9 @@ export interface UploadItem {
   name: string;
   size: number;
   progress: number;
+  uploadedBytes?: number;
+  speedBytesPerSec?: number;
+  timeRemainingSec?: number;
   status: 'PENDING' | 'UPLOADING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
   error?: string;
   media?: Media;
