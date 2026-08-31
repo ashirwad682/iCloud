@@ -248,7 +248,183 @@ router.post(
   }
 );
 
+// POST /api/v1/uploads/chunk (High-speed chunked upload for videos and large media)
+router.post(
+  '/chunk',
+  authGuard,
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const schema = z.object({
+        uploadId: z.string().min(1),
+        originalName: z.string().min(1),
+        mimeType: z.string().min(1),
+        size: z.number().positive(),
+        partNumber: z.number().int().min(1),
+        totalParts: z.number().int().min(1),
+        chunkBase64: z.string().min(1),
+        albumId: z.string().optional(),
+        isHidden: z.boolean().optional(),
+      });
+
+      const data = schema.parse(req.body);
+      const user = req.user!;
+
+      // Find or create session
+      let session = await UploadSessionModel.findOne({ uploadId: data.uploadId, userId: user._id });
+      if (!session) {
+        // Quota check
+        if (user.storageUsedBytes + data.size > user.storageQuotaBytes) {
+          throw new AppError('Storage quota exceeded.', 403, 'QUOTA_EXCEEDED');
+        }
+
+        const mediaId = new mongoose.Types.ObjectId();
+        const storageKey = storageService.generateKey(user._id.toString(), mediaId.toString(), 'original');
+        session = await UploadSessionModel.create({
+          userId: user._id,
+          uploadId: data.uploadId,
+          originalName: data.originalName,
+          mimeType: data.mimeType,
+          size: data.size,
+          storageKey,
+          totalParts: data.totalParts,
+          albumId: data.albumId,
+          isHidden: data.isHidden,
+          status: 'UPLOADING',
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          chunks: [{ partNumber: data.partNumber, dataBase64: data.chunkBase64 }],
+        });
+      } else {
+        await UploadSessionModel.updateOne(
+          { _id: session._id },
+          { $push: { chunks: { partNumber: data.partNumber, dataBase64: data.chunkBase64 } } }
+        );
+      }
+
+      // Check if all chunks have arrived
+      const updatedSession = await UploadSessionModel.findById(session._id).lean();
+      const currentChunks = updatedSession?.chunks || [];
+
+      if (currentChunks.length < data.totalParts) {
+        return res.json({
+          success: true,
+          data: {
+            uploadId: data.uploadId,
+            receivedParts: currentChunks.length,
+            totalParts: data.totalParts,
+            isComplete: false,
+          },
+        });
+      }
+
+      // All chunks received! Assemble in order
+      currentChunks.sort((a, b) => a.partNumber - b.partNumber);
+      const fullBuffer = Buffer.concat(
+        currentChunks.map((c) => Buffer.from(c.dataBase64, 'base64'))
+      );
+
+      const isVideo = data.mimeType.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm|3gp|m4v|flv)$/i.test(data.originalName.toLowerCase());
+      const isImage = !isVideo;
+      const mediaId = new mongoose.Types.ObjectId();
+      const storageKey = session.storageKey;
+      let thumbnailKey = storageKey;
+      let previewKey = storageKey;
+      let width = 0;
+      let height = 0;
+      let aspectRatio = 1;
+      let dataBase64 = fullBuffer.toString('base64');
+      let thumbnailBase64 = dataBase64;
+
+      if (isImage) {
+        try {
+          thumbnailKey = storageService.generateKey(user._id.toString(), mediaId.toString(), 'thumbnail', 'webp');
+          previewKey = storageService.generateKey(user._id.toString(), mediaId.toString(), 'preview', 'webp');
+          const imageSharp = sharp(fullBuffer);
+          const [metadata, thumbBuffer] = await Promise.all([
+            imageSharp.metadata(),
+            imageSharp.clone().resize({ width: 320, height: 320, fit: 'cover' }).webp({ quality: 82 }).toBuffer(),
+          ]);
+          width = metadata.width || 0;
+          height = metadata.height || 0;
+          if (width && height) aspectRatio = width / height;
+          if (thumbBuffer) thumbnailBase64 = thumbBuffer.toString('base64');
+        } catch {}
+      }
+
+      // Create Media Record
+      const media = await MediaModel.create({
+        _id: mediaId,
+        ownerId: user._id,
+        originalName: data.originalName,
+        storageKey,
+        originalKey: storageKey,
+        thumbnailKey,
+        previewKey,
+        mediaType: isVideo ? 'VIDEO' : 'PHOTO',
+        mimeType: data.mimeType,
+        size: fullBuffer.length,
+        width,
+        height,
+        aspectRatio,
+        checksum: CryptoUtil.computeChecksum(fullBuffer),
+        dataBase64,
+        thumbnailBase64,
+        capturedAt: new Date(),
+        uploadedAt: new Date(),
+        status: 'READY',
+        isFavorite: false,
+        isHidden: !!data.isHidden,
+        isDeleted: false,
+      });
+
+      // Update User storage
+      await UserModel.updateOne({ _id: user._id }, { $inc: { storageUsedBytes: fullBuffer.length } });
+
+      // Auto-link album if requested
+      if (data.albumId && mongoose.Types.ObjectId.isValid(data.albumId)) {
+        try {
+          const { AlbumItemModel } = await import('../../database/models/AlbumItem');
+          const { AlbumModel } = await import('../../database/models/Album');
+          await AlbumItemModel.updateOne(
+            { albumId: new mongoose.Types.ObjectId(data.albumId), mediaId: media._id },
+            {
+              $setOnInsert: {
+                albumId: new mongoose.Types.ObjectId(data.albumId),
+                mediaId: media._id,
+                ownerId: user._id,
+                addedAt: new Date(),
+              },
+            },
+            { upsert: true }
+          );
+          const totalCount = await AlbumItemModel.countDocuments({ albumId: new mongoose.Types.ObjectId(data.albumId) });
+          await AlbumModel.updateOne({ _id: new mongoose.Types.ObjectId(data.albumId) }, { $set: { itemCount: totalCount, coverMediaId: media._id } });
+        } catch {}
+      }
+
+      // Cleanup UploadSession
+      await UploadSessionModel.deleteOne({ _id: session._id });
+
+      const enhancedMedia = {
+        ...media.toObject(),
+        thumbnailUrl: `data:${media.mimeType || 'image/jpeg'};base64,${media.thumbnailBase64 || media.dataBase64}`,
+        previewUrl: `data:${media.mimeType || 'image/jpeg'};base64,${media.dataBase64}`,
+      };
+
+      res.status(201).json({
+        success: true,
+        data: {
+          media: enhancedMedia,
+          isComplete: true,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 // POST /api/v1/uploads/initiate-resumable (Initiate large chunked / resumable upload)
+
 router.post(
   '/initiate-resumable',
   authGuard,

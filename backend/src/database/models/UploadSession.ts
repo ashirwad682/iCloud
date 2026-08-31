@@ -7,6 +7,11 @@ export interface IUploadPart {
   uploadedAt: Date;
 }
 
+export interface IUploadChunk {
+  partNumber: number;
+  dataBase64: string;
+}
+
 export interface IUploadSession extends Document {
   _id: mongoose.Types.ObjectId;
   userId: mongoose.Types.ObjectId;
@@ -18,11 +23,15 @@ export interface IUploadSession extends Document {
   storageKey: string;
   totalParts: number;
   uploadedParts: IUploadPart[];
+  chunks?: IUploadChunk[];
+  albumId?: string;
+  isHidden?: boolean;
   status: 'INITIATED' | 'UPLOADING' | 'COMPLETED' | 'ABORTED';
   expiresAt: Date;
   createdAt: Date;
   updatedAt: Date;
 }
+
 
 const UploadSessionSchema = new Schema<IUploadSession>(
   {
@@ -61,6 +70,19 @@ const UploadSessionSchema = new Schema<IUploadSession>(
       type: Number,
       default: 1,
     },
+    albumId: {
+      type: String,
+    },
+    isHidden: {
+      type: Boolean,
+      default: false,
+    },
+    chunks: [
+      {
+        partNumber: Number,
+        dataBase64: String,
+      },
+    ],
     uploadedParts: [
       {
         partNumber: Number,
@@ -75,6 +97,7 @@ const UploadSessionSchema = new Schema<IUploadSession>(
       default: 'INITIATED',
       index: true,
     },
+
     expiresAt: {
       type: Date,
       required: true,
