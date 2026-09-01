@@ -47,24 +47,85 @@ function normalizeMimeType(mimeType: string, filename: string): string {
 
 function extractBuffer(data: any): Buffer {
   if (!data) return Buffer.alloc(0);
+
+  // 1. Native Node Buffer
   if (Buffer.isBuffer(data)) return data;
-  if (data && typeof data.value === 'function') {
-    const val = data.value(true);
-    return Buffer.isBuffer(val) ? val : Buffer.from(val);
+
+  // 2. Uint8Array or other TypedArray / ArrayBufferView
+  if (data instanceof Uint8Array || (data.buffer && data.byteLength !== undefined && data.byteOffset !== undefined)) {
+    return Buffer.from(data.buffer, data.byteOffset || 0, data.byteLength || data.length);
   }
-  if (data && data.buffer && Buffer.isBuffer(data.buffer)) {
-    return data.buffer;
-  }
-  if (data && data.buffer && (data.buffer instanceof ArrayBuffer || data.buffer instanceof Uint8Array)) {
-    return Buffer.from(data.buffer);
-  }
-  if (data instanceof Uint8Array) {
+
+  // 3. ArrayBuffer
+  if (data instanceof ArrayBuffer) {
     return Buffer.from(data);
   }
+
+  // 4. BSON Binary object from MongoDB driver (.value() / .buffer / .read())
+  if (data._bsontype === 'Binary' || data.constructor?.name === 'Binary' || data.sub_type !== undefined) {
+    if (data.buffer) {
+      const inner = data.buffer;
+      if (Buffer.isBuffer(inner)) return inner;
+      if (inner instanceof Uint8Array || inner.byteLength !== undefined) {
+        return Buffer.from(inner.buffer || inner, inner.byteOffset || 0, inner.byteLength || inner.length);
+      }
+    }
+    if (typeof data.read === 'function') {
+      const len = typeof data.length === 'function' ? data.length() : data.position || data.length;
+      return Buffer.from(data.read(0, len));
+    }
+    if (typeof data.value === 'function') {
+      const val = data.value();
+      if (Buffer.isBuffer(val)) return val;
+      if (typeof val === 'string') return Buffer.from(val, 'binary');
+      if (val instanceof Uint8Array) return Buffer.from(val);
+    }
+  }
+
+  // 5. MongoDB Extended JSON format: { $binary: { base64: '...', subType: '00' } } or { $binary: '...' }
+  if (data.$binary) {
+    const b64 = typeof data.$binary === 'string' ? data.$binary : data.$binary.base64;
+    if (b64 && typeof b64 === 'string') {
+      return Buffer.from(b64, 'base64');
+    }
+  }
+
+  // 6. JSON serialized buffer: { type: 'Buffer', data: number[] }
+  if (data.type === 'Buffer' && Array.isArray(data.data)) {
+    return Buffer.from(data.data);
+  }
+
+  // 7. Object containing dataBuffer or dataBase64 properties
+  if (data.dataBuffer) {
+    return extractBuffer(data.dataBuffer);
+  }
+  if (data.dataBase64 && typeof data.dataBase64 === 'string') {
+    return Buffer.from(data.dataBase64, 'base64');
+  }
+
+  // 8. String (Base64 or Data URL)
   if (typeof data === 'string') {
+    if (data.startsWith('data:')) {
+      const base64Part = data.split(',')[1];
+      return Buffer.from(base64Part || data, 'base64');
+    }
     return Buffer.from(data, 'base64');
   }
-  return Buffer.from(data);
+
+  // 9. Array of byte numbers
+  if (Array.isArray(data)) {
+    return Buffer.from(data);
+  }
+
+  // Fallback: Check for nested buffer or safe conversion
+  try {
+    if (data.buffer && typeof data.buffer === 'object') {
+      return extractBuffer(data.buffer);
+    }
+    return Buffer.from(data);
+  } catch {
+    return Buffer.alloc(0);
+  }
 }
 
 // POST /api/v1/uploads/direct (Direct Multipart File Upload with Inline Processing)
@@ -330,6 +391,7 @@ router.post(
             partNumber,
             totalParts,
             dataBuffer: chunkBuffer,
+            dataBase64: chunkBuffer.toString('base64'),
           },
         },
         { upsert: true }
@@ -373,17 +435,23 @@ router.post(
         throw new AppError('No uploaded chunks found for this session.', 404, 'CHUNKS_NOT_FOUND');
       }
 
-      const fullBuffer = Buffer.concat(
-        allChunks.map((c) => {
+      const bufferList: Buffer[] = allChunks
+        .map((c) => {
           if (c.dataBuffer) {
             return extractBuffer(c.dataBuffer);
           }
           if (c.dataBase64) {
             return Buffer.from(c.dataBase64, 'base64');
           }
-          return Buffer.alloc(0);
+          return extractBuffer(c);
         })
-      );
+        .filter((b) => Buffer.isBuffer(b) && b.length > 0);
+
+      if (bufferList.length === 0) {
+        throw new AppError('Assembled file buffer is empty or corrupted.', 400, 'CHUNKS_CORRUPTED');
+      }
+
+      const fullBuffer = Buffer.concat(bufferList);
 
       // Clean up chunk documents
       await UploadChunkModel.deleteMany({ uploadId });

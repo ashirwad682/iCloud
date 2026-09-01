@@ -68,9 +68,18 @@ export class MediaQueueService {
         const { stream } = await storageService.getObjectStream(originalKey);
         const chunks: Buffer[] = [];
         for await (const chunk of stream) {
-          chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+          if (Buffer.isBuffer(chunk)) {
+            chunks.push(chunk);
+          } else if (chunk instanceof Uint8Array) {
+            chunks.push(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+          } else if (typeof chunk === 'string') {
+            chunks.push(Buffer.from(chunk));
+          } else {
+            chunks.push(Buffer.from(chunk));
+          }
         }
-        const buffer = Buffer.concat(chunks);
+        const validChunks = chunks.filter((c) => Buffer.isBuffer(c) && c.length > 0);
+        const buffer = validChunks.length > 0 ? Buffer.concat(validChunks) : Buffer.alloc(0);
 
         // Parse EXIF metadata if available
         let exifMetadata: any = {};
