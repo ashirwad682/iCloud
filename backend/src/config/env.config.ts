@@ -11,7 +11,22 @@ const envSchema = z.object({
   PORT: z.string().transform(Number).default('3000'),
   
   // Database
-  MONGODB_URI: z.string().default('mongodb://localhost:27017/cloudvault'),
+  MONGODB_URI: z
+    .string()
+    .default('mongodb+srv://ashirwad682_db_user:Q9NVm1QGgP84tnjF@icloud.jwvrar7.mongodb.net/cloudvault?retryWrites=true&w=majority')
+    .transform((val) => {
+      let uri = (val || '').trim();
+      uri = uri.replace(/^["']+|["']+$/g, '').trim();
+      uri = uri.replace(/^MONGODB_URI\s*=\s*/i, '').trim();
+      uri = uri.replace(/^["']+|["']+$/g, '').trim();
+      if (!uri) {
+        return 'mongodb+srv://ashirwad682_db_user:Q9NVm1QGgP84tnjF@icloud.jwvrar7.mongodb.net/cloudvault?retryWrites=true&w=majority';
+      }
+      if (!uri.startsWith('mongodb://') && !uri.startsWith('mongodb+srv://')) {
+        uri = `mongodb+srv://${uri}`;
+      }
+      return uri;
+    }),
   
   // Redis
   REDIS_URL: z.string().default('redis://localhost:6379'),
