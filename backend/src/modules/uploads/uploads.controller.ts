@@ -45,6 +45,28 @@ function normalizeMimeType(mimeType: string, filename: string): string {
   return mimeType || 'application/octet-stream';
 }
 
+function extractBuffer(data: any): Buffer {
+  if (!data) return Buffer.alloc(0);
+  if (Buffer.isBuffer(data)) return data;
+  if (data && typeof data.value === 'function') {
+    const val = data.value(true);
+    return Buffer.isBuffer(val) ? val : Buffer.from(val);
+  }
+  if (data && data.buffer && Buffer.isBuffer(data.buffer)) {
+    return data.buffer;
+  }
+  if (data && data.buffer && (data.buffer instanceof ArrayBuffer || data.buffer instanceof Uint8Array)) {
+    return Buffer.from(data.buffer);
+  }
+  if (data instanceof Uint8Array) {
+    return Buffer.from(data);
+  }
+  if (typeof data === 'string') {
+    return Buffer.from(data, 'base64');
+  }
+  return Buffer.from(data);
+}
+
 // POST /api/v1/uploads/direct (Direct Multipart File Upload with Inline Processing)
 router.post(
   '/direct',
@@ -352,7 +374,15 @@ router.post(
       }
 
       const fullBuffer = Buffer.concat(
-        allChunks.map((c) => (c.dataBuffer as Buffer) || Buffer.from(c.dataBase64 || '', 'base64'))
+        allChunks.map((c) => {
+          if (c.dataBuffer) {
+            return extractBuffer(c.dataBuffer);
+          }
+          if (c.dataBase64) {
+            return Buffer.from(c.dataBase64, 'base64');
+          }
+          return Buffer.alloc(0);
+        })
       );
 
       // Clean up chunk documents

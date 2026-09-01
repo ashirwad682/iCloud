@@ -101,7 +101,6 @@ const UploadSessionSchema = new Schema<IUploadSession>(
     expiresAt: {
       type: Date,
       required: true,
-      index: true,
     },
   },
   {

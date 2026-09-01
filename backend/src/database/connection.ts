@@ -13,6 +13,7 @@ export async function connectDatabase(): Promise<typeof mongoose> {
   if (!cachedPromise) {
     mongoose.set('strictQuery', true);
     cachedPromise = mongoose.connect(config.MONGODB_URI, {
+      dbName: 'cloudvault',
       autoIndex: true,
       serverSelectionTimeoutMS: 5000,
       connectTimeoutMS: 5000,
